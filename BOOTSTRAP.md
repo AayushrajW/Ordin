@@ -209,13 +209,21 @@ resident only in your head.
 
 ## Finale shape
 
-Evaluators visit three or four times across the 36 hours and compare against
-their own last note, so arrive with the spine working and ship visible increments
-between visits rather than assembling one reveal at hour 35.
+**There is no separate 36-hour on-site event.** The build is ~34 usable hours, solo,
+across three to four days, and it ends at a submission rather than at a bench where
+evaluators visit repeatedly. Plan accordingly: there is no "ship a visible increment
+between visits" rhythm to exploit, and no second chance to correct a first impression.
 
-Open every visit with sixty seconds of demo, not slides. First visit: the
-role-switch privacy demo. Then the tamper test. Then Sentinel going red and
-green. Then whatever landed since.
+**Coding stops at hour 30.** See `docs/PLAN.md` for the build order and the decision
+gates leading up to it. A slice that is eighty percent done at hour 30 is worth zero;
+the last four hours are worth more spent on rehearsal than on one more feature.
 
-Rehearse three times on a machine that has never run the project. Every failure
-you will have at the finale shows up on the second clean run.
+**The demo machine is not the dev machine.** Everything is rehearsed on the machine
+that will actually be used, from a clean clone, twice. Every failure you will have
+shows up on the second clean run. Note that bringing the stack up *pulls* images and
+installs packages — if the network cannot be relied on, carry a saved image bundle
+with a checksum manifest rather than discovering the problem live.
+
+Open with sixty seconds of demo, not slides: the role-switch privacy demo first, then
+the tamper test, then Sentinel going red and green. Rehearse the opening until it
+needs no narration.

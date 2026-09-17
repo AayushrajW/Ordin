@@ -15,13 +15,13 @@ baseline applies and reverses; pytest green; structured logs carry a correlation
 payload exits 2. No business logic.
 
 ## Test suite state
-**There is no test suite yet, and no Makefile — slice 1 creates both.** `make` is also
-not installed on this Windows dev machine, which is why PLAN R3 makes the task-runner
-choice a slice 1 deliverable rather than an assumption.
+`tests/test_ordin_guard.py` — **4 tests, all passing.** Run with
+`python tests/test_ordin_guard.py` (it has a `__main__` block) until slice 1 adds pytest
+and a task runner, after which pytest collects it unchanged.
 
-What does exist and passes: the guard hook blocks a bad write (exit 2), allows a normal
-command (exit 0), and fails closed on a malformed payload (exit 2); `ordin-guard.py`
-compiles; `settings.json` is valid JSON.
+**There is still no Makefile, and `make` is not installed on this Windows dev machine** —
+slice 1 creates the task runner, which is why PLAN R3 makes that choice a deliverable
+rather than an assumption.
 
 ## Landed this session
 - `docs/PLAN.md` — 8-slice build order summing to exactly 30h, reorderings R1-R11,
@@ -38,35 +38,41 @@ No application code. No dependencies added.
 Nothing. No file is partially written and no code path is partially implemented.
 
 ## Next concrete action
-Run `/slice 1`. Before writing any code, decide open question 1 (idempotency key
-derivation) and write its ADR — it is cheap now and expensive after the first job runs.
+Run `/slice 1`. Open questions 1 and 5 from the previous session are now decided in
+`docs/adr/0004` and `0005`; slice 1 does not depend on the remaining ones.
 
 ## Open questions
-1. **Idempotency key derivation.** Content-derived collides across cases and leaks
-   existence (INS-06); `(case_id, upload_id)` does not; `(parent_version_id, stage)`
-   silently suppresses a corrected re-redaction (seam 2). ADR required in slice 2.
-2. **Grant granularity.** If `AccessGrant` resolves to (grantee, organization) rather
-   than (grantee, case, purpose, expiry), one lawful grant opens every case in that
-   organization (AZM-07). Unspecified in CLAUDE.md and BOOTSTRAP.md.
-3. **Time authority.** Application clock or database clock. Pick one — the database
-   boundary is cheapest and survives container clock skew — and write the ADR.
-4. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
-   version, so it may be OCR'd, extracted, indexed and anchored, producing a second
-   field set derived from redacted content (seam 11).
-5. **Invariant 7 vs manual entry.** Manual entry produces a field with no `source_span`
-   by construction, which is exactly what invariant 7 says must be rejected at the
-   schema boundary. Resolve before slice 5a.
-6. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation pending from the
+
+Two former open questions are now decided — do not re-litigate them:
+`docs/adr/0004` fixes the idempotency key as
+`SHA256(case_id || content_sha256 || operation || params_hash)`, and `docs/adr/0005`
+makes every access grant case-scoped, with organization-wide grants having no
+representation in the system at all.
+
+Still open:
+
+1. **Time authority.** Application clock or database clock. Pick one — the database
+   boundary is cheapest and survives container clock skew — and write the ADR. A hash
+   chain proves order, never time (EVD-05).
+2. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
+   version, so it may be OCR'd, extracted, indexed and anchored, producing a second field
+   set derived from redacted content (seam 11).
+3. **Invariant 7 vs manual entry.** Manual entry produces a field with no `source_span`
+   by construction, which is exactly what invariant 7 says must be rejected at the schema
+   boundary. Resolve before slice 5a.
+4. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation pending from the
    builder. Until supplied it appears in no document, deck or fixture.
-7. **Statutory citations.** Slice 10 is cut, so nothing in this build cites a section
+5. **Statutory citations.** Slice 10 is cut, so nothing in this build cites a section
    number. If one enters the UI, fixtures or deck it needs a source.
-8. Team ID for the SIH submission still unknown (slide 1 placeholder).
+6. Team ID for the SIH submission still unknown (slide 1 placeholder).
 
 ## Surprising, and worth not rediscovering
-- **The guard hook was not running.** `.claude/settings.json` invokes `python3`, which
-  on this Windows machine is the Microsoft Store alias stub: it exits 49, not 2, so
-  nothing was blocked. Still unfixed — it is a slice 1 item (one word, plus a test so
-  it cannot silently die again). Run the hook with `python`, not `python3`, until then.
+- **The guard hook was not running, and now is.** `.claude/settings.json` invoked
+  `python3`, which on this Windows machine is the Microsoft Store alias stub: it exited
+  49, not 2, so nothing was blocked for an entire session. Fixed to `python`, with
+  `tests/test_ordin_guard.py` asserting it. That test reads the command out of
+  settings.json and runs *that* rather than importing the script — verified to fail 4/4
+  against the old configuration and pass against the new one.
 - **Invariant 10 can be void while its test passes.** A table owner is not subject to
   REVOKE on its own table, so a single-role compose yields a green audit-immutability
   test that proves nothing. See `docs/adr/0001`.
@@ -75,9 +81,8 @@ derivation) and write its ADR — it is cheap now and expensive after the first 
 - **The guard hook channels the 3am shortcut.** It blocks a hand-rolled role comparison
   in Python, so the fastest remaining fix is the same condition written directly into a
   SQL WHERE clause, which its regexes cannot see. Slice 3's tests are the real control.
-- `BOOTSTRAP.md`'s "Finale shape" section assumes a 36-hour on-site event with evaluator
-  visits. That event does not exist; the section is stale (PLAN R11) and has not been
-  corrected yet.
+- `BOOTSTRAP.md`'s "Finale shape" section has been corrected: no 36-hour on-site event,
+  ~34 usable hours solo, coding stops at hour 30, demo rehearsed on a separate machine.
 
 ## Slices completed
 - [ ] 1 Skeleton
