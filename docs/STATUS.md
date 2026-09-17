@@ -4,26 +4,23 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**None — slice 4a is complete.** Next is **slice 5a, the golden thread (headless).**
+**None — slice 5a is complete.** Next is **slice 7, destructive redaction and the
+role-switch** — the slice BOOTSTRAP calls the pitch opener.
 
 ## Acceptance criterion for current slice
-Slice 5a (~5h, `docs/PLAN.md`): `upload → validate → version → OCR → text layer +
-char-offset-to-bbox map → regex extract → sign → hash → anchor`, every stage a
-`ProcessingJob` carrying the idempotency key from `docs/adr/0004`. Anchoring is a
-separately retryable stage. Low OCR confidence or handwriting routes to
-`requires_manual_entry`.
+Slice 7 (~3h, `docs/PLAN.md`): PyMuPDF `add_redact_annot` + `apply_redactions` removes
+content rather than covering it, then rasterise. The derivative is a first-class
+version carrying `derived_from_version_id`, its own `sha256` and
+`redaction_manifest_hash`. One document, three roles, one URL: full, redacted,
+expiring external grant — **the role resolved server-side from the session, never
+from a request parameter or header.**
 
-**Acceptance: running the pipeline twice on one upload yields exactly one version,
-one extraction run, one field set, one anchor.** That is a test, not an intention.
+Acceptance: extract text from the derivative and assert the victim name is absent;
+**and** assert the parent version id is denied to the redacted role; **and** the
+Sentinel search scenario (VIC-01) is green.
 
-Two things to settle first, both flagged and neither decided:
-- **Invariant 7 vs manual entry.** Manual entry produces a field with no
-  `source_span`, which is exactly what invariant 7 says must be rejected at the schema
-  boundary. `ExtractedField` was deferred from slice 2 to here precisely so this is
-  answered before the schema freezes.
-- OCR needs Tesseract in the worker image, which is the first dependency that makes
-  the worker container diverge from the api (docker/python.Dockerfile currently serves
-  both).
+Everything it needs now exists: `ocr_word` gives char-offset-to-bbox, so a field's
+span becomes rectangles to redact, and `span_to_boxes()` already does that mapping.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -39,6 +36,10 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 5a** — the golden thread headless: OCR (real Tesseract over a rasterised
+  page), deterministic extraction with spans, `SimulatedESignProvider`, anchoring, all
+  as `ProcessingJob`s keyed per ADR 0004. Running it twice yields exactly one version,
+  one OCR run, one field set, one anchor — asserted by row counts, not control flow.
 - **Slice 4a** — `BlobStore` (content-addressed, immutable), `LocalAnchorStore`
   (hash-chained, honestly named), `disposition`, and `verify()` returning five states.
   30 new tests. CLAUDE.md invariant 5 amended per ADR 0010.
@@ -75,8 +76,8 @@ that phrasing is superseded.
 ## Half-done, and exactly where
 **Nothing is half-done.** Working tree clean, 120 tests green.
 
-Slice 4a is complete. Slice 5a has not been started: there is no pipeline, no OCR,
-no `ExtractedField` table and no `ProcessingJob` execution.
+Slice 5a is complete. Slice 7 has not been started: there is no redaction code and
+no derivative version path.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -202,7 +203,7 @@ Still open:
 - [x] **3a Policy + query-level authz** - evaluator, registry, filter, agreement test
 - [x] **3b Session, PolicyDecision persistence, HTTP routes, Sentinel registry**
 - [x] **4a Integrity** — BlobStore, LocalAnchorStore, verify() with five states
-- [ ] 5a Golden thread, headless
+- [x] **5a Golden thread, headless** — OCR, extraction, sign, anchor, idempotent
 - [ ] 5b Verification UI (minimum)
 - [ ] 7 Destructive redaction + role-switch
 - [ ] ——— hard stop on coding at hour 30 ———
