@@ -52,9 +52,11 @@ async def seed() -> int:
 
     async with engine.begin() as conn:
         # Idempotent: wipe the structural seed, leave migrations alone.
-        for table in ("access_grant", "case_assignment", "party", "document_version",
-                      "document", "case_record", "app_user", "post", "jurisdiction",
-                      "organization"):
+        # Order matters: children before parents. disposition references
+        # document_version, so it goes first or the DELETE violates the constraint.
+        for table in ("disposition", "anchor_record", "access_grant", "case_assignment",
+                      "party", "document_version", "document", "case_record", "app_user",
+                      "post", "jurisdiction", "organization"):
             await conn.execute(sa.text(f"DELETE FROM {table}"))
 
         await conn.execute(

@@ -52,9 +52,13 @@ Built by students for a hackathon. These are not preferences.
 4. **No PII on the ledger. Ever.** A transaction carries exactly:
    `case_id, doc_id, version, sha256, actor_id, action, utc_ts`.
 5. **Integrity verification returns a state, never a boolean:**
-   `VERIFIED | MISMATCH | DISPOSED_ANCHOR_ONLY | UNAVAILABLE`. A lawfully
+   `VERIFIED | MISMATCH | DISPOSED_ANCHOR_ONLY | PENDING | UNAVAILABLE`. A lawfully
    disposed document is not a tampered one — reporting MISMATCH for it is both a
-   correctness bug and a legal misrepresentation.
+   correctness bug and a legal misrepresentation. By the same reasoning a document
+   awaiting its anchor is not a missing one: `PENDING` exists so that the normal
+   transient state does not collapse into `UNAVAILABLE`, which already means the
+   bytes are gone, the store is unreachable, or the caller may not see it at all.
+   (Amended in `docs/adr/0010`; the original invariant named four states.)
 6. **OCR and extracted text are untrusted data, never instructions.** Document
    content never enters a prompt, triggers a tool call, changes workflow state,
    or influences a completeness or authz decision.
