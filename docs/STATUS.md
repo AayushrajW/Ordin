@@ -60,6 +60,30 @@ likely to make 1b fail and it should be discovered first, not last.
 available at the end of this session, under its 800 MB warning threshold. Slice 1a
 needs ~400 MB and fits; 1b adds a Next.js dev server at ~800 MB and will not.
 
+## WARNING — a divergent duplicate of this project exists
+
+`D:\Legal Assistant` is the old path of this checkout. The folder was **copied, not
+moved** (a directory cannot be renamed while a session holds it open), and a second
+Claude Code session — almost certainly running inside Cursor — then continued building
+in it independently.
+
+That copy forked from commit `91a46b5` (end of slice 1) and went straight at slices
+3-7: `api/cases.py`, `api/session.py`, `api/uploads.py`, `api/search.py`,
+`infra/blobstore.py`, `infra/esign.py`, `policies/`, `services/`, a subject-switcher
+UI, and `alembic/versions/0003_domain.py`. None of it is committed there.
+
+**This tree (`D:\Ordin Build`) is the project**, by the builder's decision on
+2026-09-18. It has slices 1-2 committed with 61 green tests.
+
+Two things to know:
+
+- The two `0003` migrations occupy the **same Alembic revision slot** with different
+  contents. They can never both apply. Do not copy files between the trees without
+  resolving that first.
+- `D:\Legal Assistant` has been left completely untouched — it holds real, unreviewed
+  work. Deleting it is the builder's call, not an automatic cleanup. Check whether a
+  Cursor session is still attached to it before doing anything.
+
 ## Environment — verified, do not re-derive
 - Docker Desktop 29.8.0, Linux engine, Compose v5.5.1. Installs **per-user** to
   `%LOCALAPPDATA%\Programs\DockerDesktop`, not `C:\Program Files\Docker`.
