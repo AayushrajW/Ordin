@@ -16,3 +16,7 @@ data/
 web/.next/
 web/out/
 *.tsbuildinfo
+
+# Generated fixture documents. Deterministic (there is a test), so they are
+# regenerated with `python tasks.py fixtures` rather than carried in git.
+fixtures/corpus/

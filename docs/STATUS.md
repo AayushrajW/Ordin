@@ -4,18 +4,21 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**None — slice 2 is complete.** Next is **slice 6a, the fixture pack.**
-
-`docs/PLAN.md` puts 6a before slice 3 as a blocking dependency: slices 4a, 5a, 7 and
-11a all have acceptance tests that need documents to exist, and BOOTSTRAP does not
-deliver any until slice 6.
+**None — slice 6a is complete.** Next is **slice 3, policy and query-level
+authorization** — the intellectual core of the project and the largest remaining
+Tier A item (~7h in `docs/PLAN.md`).
 
 ## Acceptance criterion for current slice
-Slice 6a (~2h): a generator emits 8-12 fictional documents, English plus at least one
-Hindi, `SPECIMEN - NOT A REAL RECORD` on every page, each with a ground-truth sidecar
-recording the exact pre-render text and the bounding boxes of every identifying field.
-The sidecar is what makes slice 11a's OCR character-error-rate honest ground truth and
-what gives slice 7's redaction test something to assert against.
+Slice 3: versioned YAML policies; a pure evaluator unit-tested with **no app and no
+database** running; seven dimensions; deny by default. A composable filter pushes
+authorization into the SQL WHERE clause. Tests assert a **smaller count — not a
+filtered page** — for list, COUNT, export, autocomplete, single-object GET and
+full-text search. Denial tests: non-designated officer, expired grant,
+cross-organization read, unclearanced sealed read, organization-wide grant (ADR 0005),
+and one case where exactly **one** of the three validity clocks has lapsed. Extracted
+field values and the FTS index are in scope for the filter. Every decision persists
+the policy ID that decided it. Ships `SimulatedSubjectProvider` (ADR 0002) and opens
+the Sentinel scenario registry.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -31,6 +34,11 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 6a** — fixture generator producing 10 synthetic documents (8 English,
+  2 Hindi) with ground-truth sidecars: exact pre-render text plus a bounding box for
+  every identifying field. 12 new tests, including one asserting each bbox actually
+  contains the value it claims. ADR 0009 records PyMuPDF's AGPL licence and the
+  vendored OFL font.
 - **Slice 2** — 12 tables (`0003_domain_model`), pure `domain/` layer with the case
   state machine and audit chain, seed of 3 cases across 2 organizations, 39 new tests.
   The audit REVOKE was **mutation-tested**: granting UPDATE/DELETE back fails three
@@ -48,8 +56,8 @@ that phrasing is superseded.
 - `docs/modules/01-skeleton.md` completed; slice 1 closed.
 
 ## Half-done, and exactly where
-**Nothing is half-done.** Working tree clean, 61 tests green. Slice 6a has not been
-started: there is no document generator and no fixtures.
+**Nothing is half-done.** Working tree clean, 73 tests green. Slice 3 has not been
+started: there is no `policies/` directory and no evaluator in this tree.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -153,7 +161,7 @@ Still open:
 - [x] **1a Skeleton** — postgres + two roles, /health, structured logs, Alembic, tasks.py
 - [x] **1b Skeleton** — worker, web health page, Dockerfiles, four-container compose
 - [x] **2 Domain model** — 12 tables, audit chain + REVOKE (mutation-tested), seed
-- [ ] 6a Fixture pack
+- [x] **6a Fixture pack** — 10 documents, EN+HI, ground-truth sidecars with bboxes
 - [ ] 3 Policy + query-level authz
 - [ ] 4a Integrity
 - [ ] 5a Golden thread, headless

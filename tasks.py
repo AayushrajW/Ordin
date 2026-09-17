@@ -11,6 +11,7 @@ install step.
     python tasks.py fresh          destroy the volume and rebuild from nothing
     python tasks.py test           start postgres if needed, then run the suite
     python tasks.py migrate        apply migrations only
+    python tasks.py fixtures       regenerate the synthetic document corpus
     python tasks.py seed           load the demo seed (3 cases, 2 organizations)
     python tasks.py worker         run the worker alone, natively
     python tasks.py verify-compose demo path: all four containers, checked, torn down
@@ -138,6 +139,12 @@ def cmd_doctor() -> int:
 
 def cmd_migrate() -> int:
     run([PY, "-m", "alembic", "upgrade", "head"])
+    return 0
+
+
+def cmd_fixtures() -> int:
+    """Regenerate the synthetic fixture corpus and its ground-truth sidecars."""
+    run([PY, "-m", "fixtures.generate"])
     return 0
 
 
@@ -330,6 +337,7 @@ COMMANDS = {
     "migrate": cmd_migrate,
     "worker": cmd_worker,
     "seed": cmd_seed,
+    "fixtures": cmd_fixtures,
     "verify-compose": cmd_verify_compose,
 }
 
