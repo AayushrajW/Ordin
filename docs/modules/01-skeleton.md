@@ -1,16 +1,21 @@
 # 01 — Skeleton
 
-> Status: **1a landed** (commit `6e8f63a`). 1b — worker, Next.js health page, three
-> Dockerfiles, four-container compose run — not yet built.
+> Status: **complete.** 1a `6e8f63a`, 1b `72bca85`. Both acceptance paths verified on
+> the build machine: `dev` (native processes) and `compose` (four containers).
 
 ## What it does
 
-Brings up a Postgres 16 container and a FastAPI application, applies an Alembic
-baseline, and exposes `GET /health`, which checks every declared dependency and
-reports each one's status and latency. Structured JSON logs carry a correlation id
-that a caller can supply and that is echoed back, so one request can be traced across
-processes. `python tasks.py` drives all of it: `doctor`, `up`, `down`, `fresh`, `test`,
-`migrate`.
+Brings up Postgres, a FastAPI api, a worker and a Next.js web tier, applies an Alembic
+baseline, and exposes `GET /health`, which checks three dependencies — database,
+migrations, worker — and reports each one's status and latency. The web page renders
+them. Structured JSON logs carry a correlation id that a caller can supply and that is
+echoed back, so one request can be traced across processes. `python tasks.py` drives all
+of it: `doctor`, `up`, `down`, `fresh`, `test`, `migrate`, `worker`, `verify-compose`.
+
+The worker has no jobs until slice 5a. It writes a `system_heartbeat` row on a loop so
+that `/health`'s worker check is meaningful rather than decorative: green proves the
+process is alive *and* that it can reach the database as `ordin_app`. `system_heartbeat`
+is infrastructure, not a domain entity.
 
 No business logic, no domain model, no authorization. Those start at slice 2.
 
@@ -38,8 +43,18 @@ log file — threat LOG-01. Our middleware logs method, path, status and duratio
 deliberately not the query string. Slice 1 sets the pattern every later slice copies,
 which is why this is fixed here rather than discovered at slice 5.
 
+**Telemetry off, and asserted rather than configured.** Next.js posts anonymous
+telemetry by default, which breaks invariant 11's "no external network calls on the demo
+path" — and at an air-gapped venue it fails visibly. There is no config key for this:
+writing `telemetry: false` in `next.config.mjs` is silently ignored, which is the worst
+kind of fix. Only `NEXT_TELEMETRY_DISABLED=1` works, so it is set in every Dockerfile
+stage and in compose, and `tasks.py verify-compose` asserts it *inside the running
+container*. No `next/font/google` anywhere; a CSP permits no external origins.
+
 **Hybrid dev loop** (ADR 0006) and **`tasks.py` instead of `make`** (ADR 0007) follow
-from one 8 GB machine being both the build and demo machine.
+from one 8 GB machine being both the build and demo machine — though see ADR 0006's
+postscript: the four-container path measures 203 MiB at idle, so the capacity argument
+for the hybrid loop did not survive measurement. The ergonomics argument did.
 
 ## The two questions a judge will ask
 

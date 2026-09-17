@@ -29,6 +29,27 @@ path is verified once before slice 3 begins, and again at the hour-30 hard stop.
 Slice 1's acceptance test is therefore two paths — `dev` (native, must pass every
 session) and `compose` (all four containers within 8 GB, verified at those two gates).
 
+## Measured afterwards — the memory premise was wrong
+
+`tasks.py verify-compose` at the end of slice 1b reports **203 MiB total** across all
+four containers at idle:
+
+    ordin-web 36.6  ·  ordin-worker 53.3  ·  ordin-api 78.7  ·  ordin-postgres 34.9
+
+Against a fear of ~1.15 GB. The estimate above was a sum of the `mem_limit` *ceilings*,
+not of actual consumption, and the gap is an order of magnitude. **Four containers fit
+on this machine comfortably**, so "they will not fit" is not a reason to keep the hybrid
+loop, and this ADR should not be cited as if it were.
+
+What survives is the weaker and still-true reason: `next dev` gives sub-second reload and
+`next start` does not, so the inner loop is faster natively. That is a developer-ergonomics
+decision, not a capacity one, and it should be revisited the moment it costs anything.
+
+The number is idle. The worker is 53 MiB with nothing to do; slice 5a gives it Tesseract
+over 300 DPI scans, where a decoded A4 page alone is ~25 MB and working set runs several
+hundred MB above baseline. Re-measure then rather than carrying 203 MiB forward as if it
+were a steady state.
+
 ## Consequences
 - The inner loop is fast and fits in available memory. Slice 1a measures ~400 MB.
 - Dev and demo diverge by construction, which is exactly what the two-path acceptance

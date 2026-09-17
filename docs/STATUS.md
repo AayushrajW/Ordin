@@ -4,17 +4,26 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**Slice 1b** — the remaining half of the skeleton. Slice 1a is done and committed.
+**None — slice 1 is complete.** Next is **slice 2, the domain model.**
 
-Slice 1 was split; see `docs/PLAN.md`. 1a was the useful unit (it unblocks slice 2
-entirely); 1b is the demo path and can slip a session without blocking anything.
+Slice 1 was split into 1a (`6e8f63a`) and 1b (`72bca85`); see `docs/PLAN.md`.
+Both acceptance paths are verified on this machine:
+
+- **dev** — `python tasks.py up`: postgres in docker, api/worker/web native;
+  `/health` reports three checks green; killing the worker turns it 503 with
+  reason `stale` while database and migrations stay up.
+- **compose** — `python tasks.py verify-compose`: all four containers built and
+  ran, api healthy, web page green, `NEXT_TELEMETRY_DISABLED=1` asserted inside
+  the container, **203 MiB total**, then torn down. Passed first run.
 
 ## Acceptance criterion for current slice
-Slice 1b (~1.5h): a `worker` process and a Next.js `web` health page run natively;
-three Dockerfiles exist (api, worker, web); `docker-compose.yml` defines all four
-services with explicit `mem_limit`s; and **`docker compose up` brings all four up
-inside 8 GB with the web health page green**. Both acceptance paths — `dev` and
-`compose` — recorded here when they pass.
+Slice 2 (~3.5h, `docs/PLAN.md`): migrations run clean both ways; seed loads 3 cases
+across 2 organizations; **a test proves the app role cannot UPDATE an audit row, and
+that test fails if the REVOKE is removed**; `CaseAssignment` carries `valid_to`;
+`ProcessingJob` carries an idempotency key whose derivation is `docs/adr/0004`
+(`SHA256(case_id || content_sha256 || operation || params_hash)`), written up in an
+ADR before the first job runs. Entity set trimmed from BOOTSTRAP's 16 to the ~10 the
+golden thread and slice 3 actually need.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -30,20 +39,16 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
-- **Slice 1a** (`6e8f63a`): Postgres 16 container with two roles, FastAPI skeleton,
-  `/health`, structured JSON logging with correlation ids, Alembic baseline, `tasks.py`,
-  16 tests. Test written first and watched fail before implementation.
-- **Guard hook activated** (`8fa1be5`): it had been silently doing nothing.
-- **ADRs 0004-0007**: idempotency key, grant granularity, hybrid dev loop, task runner.
-- **`docs/modules/01-skeleton.md`**: module brief covering 1a.
-- `BOOTSTRAP.md` "Finale shape" corrected (no 36h event).
+- **Slice 1b** (`72bca85`): worker with heartbeat loop, Next.js health page, two
+  Dockerfiles, four-service compose with `mem_limit`s, `tasks.py verify-compose`.
+  `/health` extended from one check to three.
+- **Compose path verified for the first time** — passed on the first run.
+- ADR 0006 amended with the measured memory figure, which falsified its own premise.
+- `docs/modules/01-skeleton.md` completed; slice 1 closed.
 
 ## Half-done, and exactly where
-**Nothing is half-done.** No file is partially written, no code path partially
-implemented, working tree clean, all tests green.
-
-Slice 1b has not been started — it is not half-done, it is not begun. The files it
-will create (`worker/`, `web/`, `docker/*.Dockerfile`) do not exist yet.
+**Nothing is half-done.** Working tree clean, all tests green, both slice 1 paths
+verified. Slice 2 has not been started: `domain/` does not exist.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -103,10 +108,21 @@ Still open:
   SQL WHERE clause, which its regexes cannot see. Slice 3's tests are the real control.
 - **Slices 1-12 as written price at 59-70 hours** against ~34 available (three
   independent estimates). The plan commits to eight trimmed slices.
+- **The four-container path uses 203 MiB at idle**, not the ~1.15 GB feared. The
+  earlier figure summed `mem_limit` ceilings, not usage. This removes the capacity
+  argument for the hybrid dev loop (ADR 0006 amended); the faster-reload argument
+  stands. Re-measure at slice 5a, when Tesseract gives the worker real work.
+- **Next.js telemetry cannot be disabled from `next.config.mjs`.** A `telemetry` key
+  there is silently ignored while Next keeps posting - a fix that looks applied and is
+  not. Only `NEXT_TELEMETRY_DISABLED=1` works; `verify-compose` asserts it inside the
+  running container because it is exactly the kind of setting that regresses quietly.
+- **`pkill -f` does not kill Windows native processes.** Two stale uvicorn processes
+  from an earlier session kept serving an old one-check `/health` response. Use
+  PowerShell `Stop-Process`.
 
 ## Slices completed
 - [x] **1a Skeleton** — postgres + two roles, /health, structured logs, Alembic, tasks.py
-- [ ] 1b Skeleton — worker, web health page, Dockerfiles, four-container compose
+- [x] **1b Skeleton** — worker, web health page, Dockerfiles, four-container compose
 - [ ] 2 Domain model
 - [ ] 6a Fixture pack
 - [ ] 3 Policy + query-level authz
