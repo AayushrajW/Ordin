@@ -89,6 +89,57 @@ def wait_for_postgres(timeout: float = 60.0) -> None:
 
 # --- commands ---------------------------------------------------------------
 
+def database_revision() -> str | None:
+    """Whatever the database currently reports, or None if it has none.
+
+    Queried over the SAME connection the application uses - host and port from
+    settings - and deliberately NOT via `docker compose exec`. Exec runs inside this
+    checkout's own container whatever the configured port says, so it would always
+    report our own revision and the check would pass while the app talked to someone
+    else's database. That mistake was made here once and caught by testing the guard
+    against the other tree's port rather than trusting it.
+    """
+    import asyncio
+
+    sys.path.insert(0, str(ROOT))
+    import sqlalchemy as sa
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    cfg = settings()
+
+    async def read() -> str | None:
+        engine = create_async_engine(cfg.owner_dsn)
+        try:
+            async with engine.connect() as conn:
+                return (
+                    await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
+                ).scalar_one_or_none()
+        except Exception:  # noqa: BLE001 - no table yet, or unreachable
+            return None
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(read())
+
+
+def check_database_identity() -> bool:
+    """Is the database on the other end actually this checkout's?
+
+    Cheap, and it catches the failure that cost an evening: two checkouts sharing a
+    container, one migrating over the other, Alembic truthfully reporting "at head"
+    of a revision history this tree has never contained.
+    """
+    sys.path.insert(0, str(ROOT))
+    from infra.db_identity import check_revision, known_revisions
+
+    result = check_revision(database_revision(), known_revisions(ROOT / "alembic" / "versions"))
+    if not result.ok:
+        print("")
+        print("  DATABASE IDENTITY CHECK FAILED")
+        print(f"    {result.message}")
+    return result.ok
+
+
 def cmd_doctor() -> int:
     print("ordin doctor")
     problems = 0
@@ -132,6 +183,18 @@ def cmd_doctor() -> int:
     print(f"  .env             : {'present' if env_file.exists() else 'MISSING - copy .env.example'}")
     if not env_file.exists():
         problems += 1
+
+    if reachable:
+        sys.path.insert(0, str(ROOT))
+        from infra.db_identity import check_revision, known_revisions
+
+        identity = check_revision(
+            database_revision(), known_revisions(ROOT / "alembic" / "versions")
+        )
+        print(f"  database identity: {'ours' if identity.ok else 'FOREIGN'}")
+        if not identity.ok:
+            print(f"    {identity.message}")
+            problems += 1
 
     print(f"\n  {'ok' if problems == 0 else f'{problems} problem(s)'}")
     return 1 if problems else 0
@@ -324,6 +387,12 @@ def cmd_test() -> int:
     if not port_open(settings().postgres_host, settings().postgres_port):
         run(["docker", "compose", "up", "-d", "postgres"])
         wait_for_postgres()
+    # Refuse to run against someone else's schema. A suite that passes or fails
+    # against a foreign database tells you nothing, and says it confidently.
+    if not check_database_identity():
+        print("    refusing to run the suite against a database this checkout did "
+              "not migrate")
+        return 2
     result = run([PY, "-m", "pytest", "-rs"], check=False)
     return result.returncode
 
