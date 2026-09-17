@@ -4,7 +4,7 @@ description: End a session safely — green, committed, written down
 
 Close out this session. Do not skip steps, and tell me plainly if one fails.
 
-1. Run `make test`. If anything fails, fix it or revert the offending change —
+1. Run `python tasks.py test`. If anything fails, fix it or revert the offending change —
    never end a session red.
 2. Stage and commit all work with a conventional-commit message.
 3. Rewrite `docs/STATUS.md` so a cold session can resume without me. Include:

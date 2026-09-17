@@ -96,21 +96,65 @@ async def test_supplied_correlation_id_is_echoed_back():
 
 # --- the happy path ----------------------------------------------------------
 
+@pytest.fixture
+async def live_worker(live_settings):
+    """A fresh worker heartbeat, so /health can be green without running the worker.
+
+    Since slice 1b the report includes the worker, and an absent heartbeat correctly
+    reports down - so a health-contract test has to supply one.
+    """
+    import sqlalchemy as sa
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(live_settings.app_dsn)
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "INSERT INTO system_heartbeat (component, beat_at) VALUES ('worker', now()) "
+                "ON CONFLICT (component) DO UPDATE SET beat_at = now()"
+            )
+        )
+    await engine.dispose()
+    return live_settings
+
+
 @pytest.mark.requires_db
-async def test_healthy_when_database_is_up(live_settings):
-    response = await call_health(live_settings)
-    assert response.status_code == 200, f"expected 200, got {response.status_code}"
+async def test_healthy_when_every_dependency_is_up(live_worker):
+    response = await call_health(live_worker)
+    assert response.status_code == 200, (
+        f"expected 200, got {response.status_code}: {response.text}"
+    )
     body = response.json()
     assert body["status"] == "healthy"
-    database = next(c for c in body["checks"] if c["name"] == "database")
-    assert database["status"] == "up"
-    assert isinstance(database["latency_ms"], (int, float))
+    for check in body["checks"]:
+        assert check["status"] == "up", f"{check['name']} is {check['status']}"
+        assert isinstance(check["latency_ms"], (int, float))
 
 
 @pytest.mark.requires_db
-async def test_every_declared_dependency_is_checked(live_settings):
+async def test_every_declared_dependency_is_checked(live_worker):
     """'/health checking each dependency' - not a hardcoded ok."""
-    body = (await call_health(live_settings)).json()
+    body = (await call_health(live_worker)).json()
     names = {c["name"] for c in body["checks"]}
-    assert "database" in names
-    assert body["checks"], "health reported no checks at all"
+    assert names == {"database", "migrations", "worker"}, (
+        f"unexpected check set {names}; a dependency was added or dropped without "
+        f"updating this assertion"
+    )
+
+
+@pytest.mark.requires_db
+async def test_one_dependency_down_makes_the_whole_report_unhealthy(live_worker):
+    """Invariant 2 at the aggregate level: green requires all of them, not most."""
+    import sqlalchemy as sa
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(live_worker.app_dsn)
+    async with engine.begin() as conn:
+        await conn.execute(sa.text("DELETE FROM system_heartbeat WHERE component = 'worker'"))
+    await engine.dispose()
+
+    response = await call_health(live_worker)
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "unhealthy"
+    assert next(c for c in body["checks"] if c["name"] == "database")["status"] == "up"

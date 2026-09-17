@@ -5,12 +5,14 @@
 runner is plain Python: one interpreter, identical commands on every machine, no
 install step.
 
-    python tasks.py doctor   check the environment before blaming the code
-    python tasks.py up       start postgres, apply migrations, run the api
-    python tasks.py down     stop postgres, leave the data
-    python tasks.py fresh    destroy the volume and rebuild from nothing
-    python tasks.py test     start postgres if needed, then run the suite
-    python tasks.py migrate  apply migrations only
+    python tasks.py doctor          check the environment before blaming the code
+    python tasks.py up             dev path: postgres in docker, api+worker+web native
+    python tasks.py down           stop containers, leave the data
+    python tasks.py fresh          destroy the volume and rebuild from nothing
+    python tasks.py test           start postgres if needed, then run the suite
+    python tasks.py migrate        apply migrations only
+    python tasks.py worker         run the worker alone, natively
+    python tasks.py verify-compose demo path: all four containers, checked, torn down
 """
 import os
 import shutil
@@ -138,15 +140,150 @@ def cmd_migrate() -> int:
     return 0
 
 
+def cmd_worker() -> int:
+    """Run the worker alone, natively."""
+    run([PY, "-m", "worker.main"], check=False)
+    return 0
+
+
 def cmd_up() -> int:
-    run(["docker", "compose", "up", "-d"])
+    """Dev path: postgres in docker, api + worker + web native (ADR 0006)."""
+    run(["docker", "compose", "up", "-d", "postgres"])
     wait_for_postgres()
     cmd_migrate()
     cfg = settings()
-    print(f"\n  api on http://{cfg.ordin_api_host}:{cfg.ordin_api_port}/health   (ctrl-c to stop)\n")
-    run([PY, "-m", "uvicorn", "api.main:app",
-         "--host", cfg.ordin_api_host, "--port", str(cfg.ordin_api_port), "--reload"],
-        check=False)
+
+    procs: list[subprocess.Popen] = []
+    web_env = {**os.environ, "NEXT_TELEMETRY_DISABLED": "1",
+               "ORDIN_API_ORIGIN": f"http://{cfg.ordin_api_host}:{cfg.ordin_api_port}"}
+    try:
+        print("  starting worker")
+        procs.append(subprocess.Popen([PY, "-m", "worker.main"], cwd=ROOT))
+
+        web_dir = ROOT / "web"
+        if (web_dir / "node_modules").exists():
+            print("  starting web (next dev)")
+            procs.append(subprocess.Popen(
+                ["npm", "run", "dev"], cwd=web_dir, env=web_env, shell=(os.name == "nt")))
+        else:
+            print("  skipping web - run `npm install` in web/ first")
+
+        print(f"\n  api    http://{cfg.ordin_api_host}:{cfg.ordin_api_port}/health")
+        print(f"  web    http://127.0.0.1:3000")
+        print("  ctrl-c to stop everything\n")
+        run([PY, "-m", "uvicorn", "api.main:app",
+             "--host", cfg.ordin_api_host, "--port", str(cfg.ordin_api_port), "--reload"],
+            check=False)
+    finally:
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+    return 0
+
+
+def _http_json(url: str, timeout: float = 5.0):
+    import json as _json
+    import urllib.request
+
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return response.status, _json.loads(response.read().decode())
+
+
+def cmd_verify_compose() -> int:
+    """The demo path. Brings all four containers up, checks them, tears down.
+
+    Run this before slice 3 and again at the hour-30 hard stop (ADR 0006). The
+    dev loop never exercises the containers, so without this the compose path
+    rots silently and is discovered broken in front of a judge.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    failures: list[str] = []
+    print("verify-compose: building and starting all four containers")
+    run(["docker", "compose", "up", "-d", "--build"], check=False)
+
+    try:
+        print("  waiting for the api to become healthy (up to 180s)")
+        deadline = time.time() + 180
+        api_ok = False
+        while time.time() < deadline:
+            try:
+                status, body = _http_json("http://127.0.0.1:8000/health")
+                if status == 200 and body.get("status") == "healthy":
+                    api_ok = True
+                    print(f"    api healthy: {[c['name'] for c in body['checks']]}")
+                    break
+            except (urllib.error.URLError, OSError, ValueError):
+                pass
+            time.sleep(3)
+        if not api_ok:
+            failures.append("api never reported healthy")
+
+        print("  checking the web page")
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:3000", timeout=15) as r:
+                html = r.read().decode(errors="replace")
+            if r.status != 200:
+                failures.append(f"web returned {r.status}")
+            elif "All dependencies healthy" not in html:
+                failures.append("web page did not render the healthy state")
+            else:
+                print("    web page green")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"web unreachable ({type(exc).__name__})")
+
+        # Invariant 11. This setting silently regresses - next.config.mjs cannot
+        # express it and a machine-local opt-out does not travel with the repo.
+        print("  asserting telemetry is disabled in the web container")
+        probe = subprocess.run(
+            ["docker", "compose", "exec", "-T", "web", "sh", "-c", "echo $NEXT_TELEMETRY_DISABLED"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if probe.stdout.strip() != "1":
+            failures.append("NEXT_TELEMETRY_DISABLED is not 1 in the web container")
+        else:
+            print("    NEXT_TELEMETRY_DISABLED=1")
+
+        print("  measuring memory")
+        stats = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        total_mb = 0.0
+        for line in stats.stdout.strip().splitlines():
+            if "\t" not in line:
+                continue
+            name, usage = line.split("\t", 1)
+            used = usage.split("/")[0].strip()
+            try:
+                value = float(used.rstrip("GKMiB"))
+                if used.endswith("GiB"):
+                    value *= 1024
+                elif used.endswith("KiB"):
+                    value /= 1024
+                total_mb += value
+                print(f"    {name:16} {used}")
+            except ValueError:
+                pass
+        print(f"    {'TOTAL':16} {total_mb:.0f}MiB")
+        if total_mb > 1500:
+            failures.append(f"containers used {total_mb:.0f} MiB, over the 1500 MiB ceiling")
+    finally:
+        print("  tearing down")
+        run(["docker", "compose", "down"], check=False)
+
+    if failures:
+        print("\n  FAILED:")
+        for f in failures:
+            print(f"    - {f}")
+        return 1
+    print("\n  compose path verified")
     return 0
 
 
@@ -181,6 +318,8 @@ COMMANDS = {
     "fresh": cmd_fresh,
     "test": cmd_test,
     "migrate": cmd_migrate,
+    "worker": cmd_worker,
+    "verify-compose": cmd_verify_compose,
 }
 
 if __name__ == "__main__":

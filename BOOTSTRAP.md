@@ -116,8 +116,8 @@ because the earlier reasoning was wrong:
 Each has one acceptance test. Write the test first.
 
 **1. Skeleton.** Four containers, `/health` checking each dependency, Alembic
-baseline, Makefile (`up`, `down`, `test`, `fresh`), pytest green, structured logs
-with correlation IDs. *Acceptance:* `make fresh && make up` from a clean clone
+baseline, `tasks.py` (`up`, `down`, `test`, `fresh`; ADR 0007), pytest green, structured logs
+with correlation IDs. *Acceptance:* `python tasks.py fresh && python tasks.py up` from a clean clone
 gives a green health page.
 
 **2. Domain model.** Organization, Jurisdiction, User, Post, Clearance, Case,

@@ -38,6 +38,70 @@ services:
       retries: 10
       start_period: 5s
 
+  api:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    container_name: ordin-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &python_env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ordin}
+      POSTGRES_OWNER_USER: ${POSTGRES_OWNER_USER:-ordin_owner}
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?required}
+      ORDIN_APP_USER: ${ORDIN_APP_USER:-ordin_app}
+      ORDIN_APP_PASSWORD: ${ORDIN_APP_PASSWORD:?required}
+      ORDIN_ENV: ${ORDIN_ENV:-dev}
+      ORDIN_LOG_LEVEL: ${ORDIN_LOG_LEVEL:-INFO}
+    command: >
+      sh -c "python -m alembic upgrade head &&
+             python -m uvicorn api.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    mem_limit: 256m
+    healthcheck:
+      # Uses the api's own contract: 503 when a dependency is down, so this goes
+      # unhealthy for the same reasons the health page goes red.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    container_name: ordin-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *python_env
+    command: ["python", "-m", "worker.main"]
+    mem_limit: 256m
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    container_name: ordin-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # The only portable telemetry control - see docker/web.Dockerfile.
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Server-side fetch inside the compose network; the browser never uses this.
+      ORDIN_API_ORIGIN: http://api:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 384m
+
 volumes:
   ordin_pgdata:
     name: ordin_pgdata
