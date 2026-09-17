@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     ordin_api_host: str = "127.0.0.1"
     ordin_api_port: int = 8000
 
+    # Signs the session token (ADR 0002). SecretStr so it cannot reach a log or a
+    # repr; a compose or settings default here would be invisible to the guard hook
+    # and would ship in a public repository (threat SESS-01).
+    ordin_session_secret: SecretStr = SecretStr("")
+
     # --- derived ---
     def _dsn(self, user: str, password: SecretStr) -> str:
         return (
