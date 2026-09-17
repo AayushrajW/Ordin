@@ -44,7 +44,7 @@ def _assignment_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -
     return sa.exists(
         sa.select(sa.literal(1)).where(
             a.c.case_id == case.c.id,
-            a.c.user_id == sa.literal(s.user_id),
+            a.c.user_id == s.user_id,
             a.c.valid_from <= sa.func.now(),
             # valid_to IS NULL means "no end date", which is in force. Writing
             # `valid_to > now()` instead would deny every permanent assignment.
@@ -54,11 +54,11 @@ def _assignment_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -
 
 
 def _same_organization(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:
-    return case.c.organization_id == sa.literal(s.organization_id)
+    return case.c.organization_id == s.organization_id
 
 
 def _same_jurisdiction(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:
-    return case.c.jurisdiction_id == sa.literal(s.jurisdiction_id)
+    return case.c.jurisdiction_id == s.jurisdiction_id
 
 
 def _grant_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:
@@ -66,7 +66,7 @@ def _grant_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -> Col
     return sa.exists(
         sa.select(sa.literal(1)).where(
             g.c.case_id == case.c.id,
-            g.c.grantee_id == sa.literal(s.user_id),
+            g.c.grantee_id == s.user_id,
             g.c.expires_at > sa.func.now(),
             g.c.revoked_at.is_(None),
         )
@@ -84,7 +84,7 @@ def _grant_not_self_issued(s: Subject, case: sa.Table, tables: dict, at: datetim
     return sa.exists(
         sa.select(sa.literal(1)).where(
             g.c.case_id == case.c.id,
-            g.c.grantee_id == sa.literal(s.user_id),
+            g.c.grantee_id == s.user_id,
             g.c.expires_at > sa.func.now(),
             g.c.revoked_at.is_(None),
             g.c.granted_by != g.c.grantee_id,
@@ -93,7 +93,7 @@ def _grant_not_self_issued(s: Subject, case: sa.Table, tables: dict, at: datetim
 
 
 def _case_is_sealed(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:
-    return case.c.access_class == sa.literal("sealed")
+    return case.c.access_class == "sealed"
 
 
 def _clearance_current(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:

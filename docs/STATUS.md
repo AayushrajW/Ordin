@@ -4,21 +4,25 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**None — slice 6a is complete.** Next is **slice 3, policy and query-level
-authorization** — the intellectual core of the project and the largest remaining
-Tier A item (~7h in `docs/PLAN.md`).
+**Slice 3 is split. 3a is complete; 3b is next.**
+
+3a delivered the part CLAUDE.md calls the invariant: policy as versioned data, a pure
+evaluator, and the predicate pushed inside the SQL query on every surface. 3b is the
+HTTP and persistence wiring that hangs off it.
 
 ## Acceptance criterion for current slice
-Slice 3: versioned YAML policies; a pure evaluator unit-tested with **no app and no
-database** running; seven dimensions; deny by default. A composable filter pushes
-authorization into the SQL WHERE clause. Tests assert a **smaller count — not a
-filtered page** — for list, COUNT, export, autocomplete, single-object GET and
-full-text search. Denial tests: non-designated officer, expired grant,
-cross-organization read, unclearanced sealed read, organization-wide grant (ADR 0005),
-and one case where exactly **one** of the three validity clocks has lapsed. Extracted
-field values and the FTS index are in scope for the filter. Every decision persists
-the policy ID that decided it. Ships `SimulatedSubjectProvider` (ADR 0002) and opens
-the Sentinel scenario registry.
+Slice 3b (~2h):
+
+- **`SimulatedSubjectProvider`** (ADR 0002) - subject resolved server-side from a
+  signed session cookie, never from a request parameter or header. Declares
+  `maturity: mvp` with a real IdP named as `production_adapter`.
+- **`PolicyDecision` persistence** - invariant 3 requires every decision to log the
+  policy ID that decided it. `Decision` already carries `policy_id`,
+  `policy_version` and `rule_id`; nothing writes them to a table yet.
+- **HTTP routes** for case list / fetch / search / autocomplete, each starting from
+  `infra.authz.authorized_cases()` so they inherit invariant 1 by construction.
+- **The Sentinel scenario registry** opened, with slice 3's denials as its first
+  entries (PLAN R7: Sentinel accrues per slice rather than being a late slice).
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -34,6 +38,11 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 3a** - policy as versioned YAML, a pure evaluator, one predicate registry
+  with Python and SQL halves that are *proven* to agree, and the filter pushed inside
+  the query on six surfaces. 47 new tests.
+- **Stack isolation + foreign-database guard** after the two checkouts were found to
+  be sharing one postgres container.
 - **Slice 6a** — fixture generator producing 10 synthetic documents (8 English,
   2 Hindi) with ground-truth sidecars: exact pre-render text plus a bounding box for
   every identifying field. 12 new tests, including one asserting each bbox actually
@@ -56,8 +65,11 @@ that phrasing is superseded.
 - `docs/modules/01-skeleton.md` completed; slice 1 closed.
 
 ## Half-done, and exactly where
-**Nothing is half-done.** Working tree clean, 73 tests green. Slice 3 has not been
-started: there is no `policies/` directory and no evaluator in this tree.
+**Nothing is half-done.** Working tree clean, 120 tests green.
+
+Slice 3 is *split*, not partial: 3a is complete and committed with its own tests.
+3b has not been started - there is no `api/session.py`, no `PolicyDecision` table,
+and no HTTP route yet consumes `infra.authz.authorized_cases()`.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -180,7 +192,8 @@ Still open:
 - [x] **1b Skeleton** — worker, web health page, Dockerfiles, four-container compose
 - [x] **2 Domain model** — 12 tables, audit chain + REVOKE (mutation-tested), seed
 - [x] **6a Fixture pack** — 10 documents, EN+HI, ground-truth sidecars with bboxes
-- [ ] 3 Policy + query-level authz
+- [x] **3a Policy + query-level authz** - evaluator, registry, filter, agreement test
+- [ ] 3b Session, PolicyDecision persistence, HTTP routes, Sentinel registry
 - [ ] 4a Integrity
 - [ ] 5a Golden thread, headless
 - [ ] 5b Verification UI (minimum)
