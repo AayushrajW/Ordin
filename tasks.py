@@ -295,7 +295,10 @@ def cmd_down() -> int:
 def cmd_fresh() -> int:
     print("  destroying the database volume")
     run(["docker", "compose", "down", "-v"], check=False)
-    run(["docker", "compose", "up", "-d"])
+    # postgres only: the dev loop runs api/worker/web natively (ADR 0006).
+    # Starting all four here would also mean tests hit a containerised api
+    # built from an older image rather than the code under test.
+    run(["docker", "compose", "up", "-d", "postgres"])
     wait_for_postgres()
     cmd_migrate()
     print("\n  fresh database ready")
@@ -305,7 +308,7 @@ def cmd_fresh() -> int:
 def cmd_test() -> int:
     """Start postgres first, so requires_db tests actually run rather than skip."""
     if not port_open(settings().postgres_host, settings().postgres_port):
-        run(["docker", "compose", "up", "-d"])
+        run(["docker", "compose", "up", "-d", "postgres"])
         wait_for_postgres()
     result = run([PY, "-m", "pytest", "-rs"], check=False)
     return result.returncode

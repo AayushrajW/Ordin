@@ -8,6 +8,12 @@
 # killer selects by size, and an unbounded worker takes postgres with it — where
 # the audit chain, the job queue and the case record all live (threat OPS-03).
 
+# Pinned so the project name does not track the folder name. Without this, compose
+# derives it from the directory, so renaming the checkout orphans the containers,
+# the network and - most painfully - the data volume, which then warns that it
+# "was created for project X" on every command.
+name: ordin
+
 services:
   postgres:
     image: postgres:16-alpine
