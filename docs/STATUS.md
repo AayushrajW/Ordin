@@ -4,26 +4,18 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**None — slice 1 is complete.** Next is **slice 2, the domain model.**
+**None — slice 2 is complete.** Next is **slice 6a, the fixture pack.**
 
-Slice 1 was split into 1a (`6e8f63a`) and 1b (`72bca85`); see `docs/PLAN.md`.
-Both acceptance paths are verified on this machine:
-
-- **dev** — `python tasks.py up`: postgres in docker, api/worker/web native;
-  `/health` reports three checks green; killing the worker turns it 503 with
-  reason `stale` while database and migrations stay up.
-- **compose** — `python tasks.py verify-compose`: all four containers built and
-  ran, api healthy, web page green, `NEXT_TELEMETRY_DISABLED=1` asserted inside
-  the container, **203 MiB total**, then torn down. Passed first run.
+`docs/PLAN.md` puts 6a before slice 3 as a blocking dependency: slices 4a, 5a, 7 and
+11a all have acceptance tests that need documents to exist, and BOOTSTRAP does not
+deliver any until slice 6.
 
 ## Acceptance criterion for current slice
-Slice 2 (~3.5h, `docs/PLAN.md`): migrations run clean both ways; seed loads 3 cases
-across 2 organizations; **a test proves the app role cannot UPDATE an audit row, and
-that test fails if the REVOKE is removed**; `CaseAssignment` carries `valid_to`;
-`ProcessingJob` carries an idempotency key whose derivation is `docs/adr/0004`
-(`SHA256(case_id || content_sha256 || operation || params_hash)`), written up in an
-ADR before the first job runs. Entity set trimmed from BOOTSTRAP's 16 to the ~10 the
-golden thread and slice 3 actually need.
+Slice 6a (~2h): a generator emits 8-12 fictional documents, English plus at least one
+Hindi, `SPECIMEN - NOT A REAL RECORD` on every page, each with a ground-truth sidecar
+recording the exact pre-render text and the bounding boxes of every identifying field.
+The sidecar is what makes slice 11a's OCR character-error-rate honest ground truth and
+what gives slice 7's redaction test something to assert against.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -39,6 +31,15 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 2** — 12 tables (`0003_domain_model`), pure `domain/` layer with the case
+  state machine and audit chain, seed of 3 cases across 2 organizations, 39 new tests.
+  The audit REVOKE was **mutation-tested**: granting UPDATE/DELETE back fails three
+  tests, revoking restores them.
+- **ADR 0008** (domain model scope), `docs/modules/02-domain-model.md`.
+- Folder renamed to `Ordin Build`; compose project pinned to `ordin` so it no longer
+  tracks the directory name.
+
+### Earlier this session
 - **Slice 1b** (`72bca85`): worker with heartbeat loop, Next.js health page, two
   Dockerfiles, four-service compose with `mem_limit`s, `tasks.py verify-compose`.
   `/health` extended from one check to three.
@@ -47,8 +48,8 @@ that phrasing is superseded.
 - `docs/modules/01-skeleton.md` completed; slice 1 closed.
 
 ## Half-done, and exactly where
-**Nothing is half-done.** Working tree clean, all tests green, both slice 1 paths
-verified. Slice 2 has not been started: `domain/` does not exist.
+**Nothing is half-done.** Working tree clean, 61 tests green. Slice 6a has not been
+started: there is no document generator and no fixtures.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -77,20 +78,24 @@ Decided already, do not re-litigate: idempotency key (`adr/0004`), grant granula
 
 Still open:
 
-1. **Time authority.** Application clock or database clock. Pick one — the database
+1. **Case state names are placeholders.** `registered / under_investigation / filed /
+   in_trial / closed` are generic procedural stages, not confirmed Indian statutory
+   ones (ADR 0008). They must be checked against a source before appearing in UI copy,
+   a fixture or the deck. Transitions are data, so the fix is one table.
+2. **Time authority.** Application clock or database clock. Pick one — the database
    boundary is cheapest and survives container clock skew — and write the ADR. A hash
    chain proves order, never time (threat EVD-05).
-2. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
+3. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
    version, so it may be OCR'd, extracted, indexed and anchored, producing a second
    field set derived from redacted content (seam 11).
-3. **Invariant 7 vs manual entry.** Manual entry produces a field with no `source_span`
+4. **Invariant 7 vs manual entry.** Manual entry produces a field with no `source_span`
    by construction, which is exactly what invariant 7 says must be rejected at the
    schema boundary. Resolve before slice 5a.
-4. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation pending. Until
+5. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation pending. Until
    supplied it appears in no document, deck or fixture.
-5. **Statutory citations.** Slice 10 is cut, so nothing here cites a section number.
+6. **Statutory citations.** Slice 10 is cut, so nothing here cites a section number.
    If one enters the UI, fixtures or deck it needs a source.
-6. Team ID for the SIH submission still unknown.
+7. Team ID for the SIH submission still unknown.
 
 ## Surprising, and worth not rediscovering
 - **`ordin_owner` is a superuser**, because that is how the Postgres image creates
@@ -123,7 +128,7 @@ Still open:
 ## Slices completed
 - [x] **1a Skeleton** — postgres + two roles, /health, structured logs, Alembic, tasks.py
 - [x] **1b Skeleton** — worker, web health page, Dockerfiles, four-container compose
-- [ ] 2 Domain model
+- [x] **2 Domain model** — 12 tables, audit chain + REVOKE (mutation-tested), seed
 - [ ] 6a Fixture pack
 - [ ] 3 Policy + query-level authz
 - [ ] 4a Integrity

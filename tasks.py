@@ -11,6 +11,7 @@ install step.
     python tasks.py fresh          destroy the volume and rebuild from nothing
     python tasks.py test           start postgres if needed, then run the suite
     python tasks.py migrate        apply migrations only
+    python tasks.py seed           load the demo seed (3 cases, 2 organizations)
     python tasks.py worker         run the worker alone, natively
     python tasks.py verify-compose demo path: all four containers, checked, torn down
 """
@@ -137,6 +138,12 @@ def cmd_doctor() -> int:
 
 def cmd_migrate() -> int:
     run([PY, "-m", "alembic", "upgrade", "head"])
+    return 0
+
+
+def cmd_seed() -> int:
+    """Load the structural demo seed: 3 cases across 2 organizations."""
+    run([PY, "seed.py"])
     return 0
 
 
@@ -322,6 +329,7 @@ COMMANDS = {
     "test": cmd_test,
     "migrate": cmd_migrate,
     "worker": cmd_worker,
+    "seed": cmd_seed,
     "verify-compose": cmd_verify_compose,
 }
 
