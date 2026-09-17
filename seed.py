@@ -52,12 +52,24 @@ async def seed() -> int:
 
     async with engine.begin() as conn:
         # Idempotent: wipe the structural seed, leave migrations alone.
-        # Order matters: children before parents. disposition references
-        # document_version, so it goes first or the DELETE violates the constraint.
-        for table in ("disposition", "anchor_record", "access_grant", "case_assignment",
-                      "party", "document_version", "document", "case_record", "app_user",
-                      "post", "jurisdiction", "organization"):
-            await conn.execute(sa.text(f"DELETE FROM {table}"))
+        #
+        # CASCADE rather than a hand-ordered DELETE list. The list approach broke
+        # twice - once when `disposition` arrived and once when `extracted_field`
+        # did - because every new table with a foreign key into this set silently
+        # invalidates the ordering. CASCADE follows the constraints the database
+        # already knows about, so a table added in a later slice needs no edit here.
+        #
+        # The audit trail is deliberately NOT in this list: audit_event,
+        # policy_decision and anchor_record hold no foreign keys into it, so CASCADE
+        # cannot reach them. A seed that wiped the audit log would be destroying the
+        # one thing that is supposed to be append-only.
+        await conn.execute(
+            sa.text(
+                "TRUNCATE organization, jurisdiction, post, app_user, case_record, "
+                "party, case_assignment, document, document_version, access_grant "
+                "RESTART IDENTITY CASCADE"
+            )
+        )
 
         await conn.execute(
             sa.text("INSERT INTO organization (id, name, kind) VALUES "
