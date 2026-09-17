@@ -11,6 +11,7 @@ install step.
     python tasks.py fresh          destroy the volume and rebuild from nothing
     python tasks.py test           start postgres if needed, then run the suite
     python tasks.py migrate        apply migrations only
+    python tasks.py sentinel       run the security scenarios and print the result
     python tasks.py fixtures       regenerate the synthetic document corpus
     python tasks.py seed           load the demo seed (3 cases, 2 organizations)
     python tasks.py worker         run the worker alone, natively
@@ -203,6 +204,11 @@ def cmd_doctor() -> int:
 def cmd_migrate() -> int:
     run([PY, "-m", "alembic", "upgrade", "head"])
     return 0
+
+
+def cmd_sentinel() -> int:
+    """Run the Sentinel scenarios and print the result."""
+    return run([PY, "-m", "sentinel.run"], check=False).returncode
 
 
 def cmd_fixtures() -> int:
@@ -407,6 +413,7 @@ COMMANDS = {
     "worker": cmd_worker,
     "seed": cmd_seed,
     "fixtures": cmd_fixtures,
+    "sentinel": cmd_sentinel,
     "verify-compose": cmd_verify_compose,
 }
 

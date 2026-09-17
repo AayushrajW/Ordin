@@ -13,9 +13,14 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from pathlib import Path
+
+from api.cases import router as cases_router
 from api.config import Settings
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
+from api.session import router as session_router
+from domain.policy import load_policy
 
 log = logging.getLogger("ordin.api")
 
@@ -53,6 +58,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(CorrelationIdMiddleware)
     app.state.settings = settings
+    # Loaded once at startup, and deliberately NOT lazily per request: a malformed
+    # policy must stop the process rather than deny every request at runtime while
+    # looking like an outage (domain/policy.py raises PolicyError at load).
+    app.state.policy = load_policy(Path(__file__).resolve().parents[1] / "policies" / "case_read.v1.yaml")
+    app.include_router(session_router)
+    app.include_router(cases_router)
 
     @app.get("/health")
     async def health() -> JSONResponse:

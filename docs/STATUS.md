@@ -4,25 +4,20 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**Slice 3 is split. 3a is complete; 3b is next.**
-
-3a delivered the part CLAUDE.md calls the invariant: policy as versioned data, a pure
-evaluator, and the predicate pushed inside the SQL query on every surface. 3b is the
-HTTP and persistence wiring that hangs off it.
+**None — slice 3 is complete (3a and 3b).** Next is **slice 4a, integrity.**
 
 ## Acceptance criterion for current slice
-Slice 3b (~2h):
+Slice 4a (~3.5h, `docs/PLAN.md`): content-addressed immutable versions behind a
+`BlobStore` interface; SHA-256 over bytes **and** over canonical metadata JSON;
+`LocalAnchorStore` (never named after a ledger — CLAUDE.md honesty rule);
+`verify()` returning `VERIFIED | MISMATCH | DISPOSED_ANCHOR_ONLY | UNAVAILABLE`
+**and routed through the slice 3 filter**, returning `UNAVAILABLE` indistinguishably
+for "does not exist" and "not yours" (threat INS-04).
 
-- **`SimulatedSubjectProvider`** (ADR 0002) - subject resolved server-side from a
-  signed session cookie, never from a request parameter or header. Declares
-  `maturity: mvp` with a real IdP named as `production_adapter`.
-- **`PolicyDecision` persistence** - invariant 3 requires every decision to log the
-  policy ID that decided it. `Decision` already carries `policy_id`,
-  `policy_version` and `rule_id`; nothing writes them to a table yet.
-- **HTTP routes** for case list / fetch / search / autocomplete, each starting from
-  `infra.authz.authorized_cases()` so they inherit invariant 1 by construction.
-- **The Sentinel scenario registry** opened, with slice 3's denials as its first
-  entries (PLAN R7: Sentinel accrues per slice rather than being a late slice).
+Acceptance: mutate bytes on disk → MISMATCH naming the diverged version; dispose →
+DISPOSED_ANCHOR_ONLY, never MISMATCH. Consider adding a `PENDING` state — the
+coverage pass found invariant 5 is one state short, because a case with a pending
+anchor is valid but has nowhere to report that.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -38,6 +33,10 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 3b** — `policy_decision` persistence (invariant 3 end to end),
+  `SimulatedSubjectProvider`, HTTP routes over `authorized_cases()`, and the Sentinel
+  scenario registry with slice 3's seven scenarios. `python tasks.py sentinel` prints
+  them; 7/7 passing.
 - **Slice 3a** - policy as versioned YAML, a pure evaluator, one predicate registry
   with Python and SQL halves that are *proven* to agree, and the filter pushed inside
   the query on six surfaces. 47 new tests.
@@ -67,9 +66,8 @@ that phrasing is superseded.
 ## Half-done, and exactly where
 **Nothing is half-done.** Working tree clean, 120 tests green.
 
-Slice 3 is *split*, not partial: 3a is complete and committed with its own tests.
-3b has not been started - there is no `api/session.py`, no `PolicyDecision` table,
-and no HTTP route yet consumes `infra.authz.authorized_cases()`.
+Slice 3 is complete, both halves. Slice 4a has not been started: there is no
+`BlobStore`, no `LocalAnchorStore` and no `verify()`.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -193,7 +191,7 @@ Still open:
 - [x] **2 Domain model** — 12 tables, audit chain + REVOKE (mutation-tested), seed
 - [x] **6a Fixture pack** — 10 documents, EN+HI, ground-truth sidecars with bboxes
 - [x] **3a Policy + query-level authz** - evaluator, registry, filter, agreement test
-- [ ] 3b Session, PolicyDecision persistence, HTTP routes, Sentinel registry
+- [x] **3b Session, PolicyDecision persistence, HTTP routes, Sentinel registry**
 - [ ] 4a Integrity
 - [ ] 5a Golden thread, headless
 - [ ] 5b Verification UI (minimum)
