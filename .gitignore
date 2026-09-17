@@ -1,8 +1,13 @@
 .env
 .env.*
+# ...but the template must be committed: it is the only record of what
+# configuration the project needs.
+!.env.example
 *.pem
 *.key
 __pycache__/
 node_modules/
 .venv/
 data/
+*.egg-info/
+.venv/

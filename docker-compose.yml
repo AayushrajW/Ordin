@@ -1,0 +1,43 @@
+# Ordin — four containers.
+#
+# Slice 1a defines postgres only; slice 1b adds api, worker and web.
+# The dev loop on an 8 GB box runs postgres here and api/worker/web natively.
+# The full four-container path is the demo path, verified before slice 3.
+#
+# Every service carries an explicit mem_limit. On a 7.8 GB host the Linux OOM
+# killer selects by size, and an unbounded worker takes postgres with it — where
+# the audit chain, the job queue and the case record all live (threat OPS-03).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ordin-postgres
+    restart: unless-stopped
+    environment:
+      # ordin_owner owns the schema and is what Alembic connects as.
+      # It is NOT the role the application uses — see docs/adr/0001.
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:-ordin_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?POSTGRES_OWNER_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-ordin}
+      # Consumed by db/init/01-roles.sh to create the restricted runtime role.
+      ORDIN_APP_PASSWORD: ${ORDIN_APP_PASSWORD:?ORDIN_APP_PASSWORD must be set}
+    ports:
+      # Bound to loopback deliberately. Publishing 0.0.0.0 exposes the database
+      # to the venue LAN; there is no authentication slice and no rate limiting
+      # (threats EXT-01, EXT-04). This is the cheapest control in the project.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ordin_pgdata:/var/lib/postgresql/data
+      # Runs once, on first initialisation of an empty volume.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OWNER_USER:-ordin_owner} -d ${POSTGRES_DB:-ordin}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  ordin_pgdata:
+    name: ordin_pgdata
