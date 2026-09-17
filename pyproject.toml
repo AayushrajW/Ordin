@@ -19,6 +19,8 @@ dependencies = [
     # slice 6a uses it to GENERATE the fixture documents so the same renderer
     # produces and later redacts them. AGPL-3.0 - see docs/adr/0009.
     "pymupdf>=1.24,<1.27",
+    # Policy files. CLAUDE.md decides "versioned YAML policy files"; this reads them.
+    "PyYAML>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]

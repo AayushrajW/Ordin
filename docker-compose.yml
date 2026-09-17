@@ -10,14 +10,21 @@
 
 # Pinned so the project name does not track the folder name. Without this, compose
 # derives it from the directory, so renaming the checkout orphans the containers,
-# the network and - most painfully - the data volume, which then warns that it
-# "was created for project X" on every command.
-name: ordin
+# the network and - most painfully - the data volume.
+#
+# Everything below is namespaced `ordin-build`, including container_name and the
+# volume. A second checkout of this project exists at D:\Legal Assistant with an
+# identical compose file; because container names are GLOBALLY unique in Docker,
+# both were attaching to one container and one volume - so whichever tree migrated
+# last silently replaced the other's schema. Namespacing is what keeps the two
+# independent. Do not un-namespace these without checking that the other checkout
+# is gone.
+name: ordin-build
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: ordin-postgres
+    container_name: ordin-build-postgres
     restart: unless-stopped
     environment:
       # ordin_owner owns the schema and is what Alembic connects as.
@@ -31,9 +38,9 @@ services:
       # Bound to loopback deliberately. Publishing 0.0.0.0 exposes the database
       # to the venue LAN; there is no authentication slice and no rate limiting
       # (threats EXT-01, EXT-04). This is the cheapest control in the project.
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
     volumes:
-      - ordin_pgdata:/var/lib/postgresql/data
+      - ordin_build_pgdata:/var/lib/postgresql/data
       # Runs once, on first initialisation of an empty volume.
       - ./db/init:/docker-entrypoint-initdb.d:ro
     mem_limit: 256m
@@ -48,7 +55,7 @@ services:
     build:
       context: .
       dockerfile: docker/python.Dockerfile
-    container_name: ordin-api
+    container_name: ordin-build-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -67,7 +74,7 @@ services:
       sh -c "python -m alembic upgrade head &&
              python -m uvicorn api.main:app --host 0.0.0.0 --port 8000"
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${ORDIN_API_PORT:-8001}:8000"
     mem_limit: 256m
     healthcheck:
       # Uses the api's own contract: 503 when a dependency is down, so this goes
@@ -82,7 +89,7 @@ services:
     build:
       context: .
       dockerfile: docker/python.Dockerfile
-    container_name: ordin-worker
+    container_name: ordin-build-worker
     restart: unless-stopped
     depends_on:
       postgres:
@@ -95,7 +102,7 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
-    container_name: ordin-web
+    container_name: ordin-build-web
     restart: unless-stopped
     depends_on:
       - api
@@ -105,9 +112,9 @@ services:
       # Server-side fetch inside the compose network; the browser never uses this.
       ORDIN_API_ORIGIN: http://api:8000
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${ORDIN_WEB_PORT:-3001}:3000"
     mem_limit: 384m
 
 volumes:
-  ordin_pgdata:
-    name: ordin_pgdata
+  ordin_build_pgdata:
+    name: ordin_build_pgdata

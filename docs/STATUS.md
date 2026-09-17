@@ -81,7 +81,25 @@ That copy forked from commit `91a46b5` (end of slice 1) and went straight at sli
 UI, and `alembic/versions/0003_domain.py`. None of it is committed there.
 
 **This tree (`D:\Ordin Build`) is the project**, by the builder's decision on
-2026-09-18. It has slices 1-2 committed with 61 green tests.
+2026-09-18. The other session is still running and has been left alone.
+
+**The two trees shared a database until 2026-09-18.** Both compose files carried
+identical `container_name` values, and container names are globally unique in Docker -
+so `docker compose up` in either tree attached to the *same* container and the same
+`ordin_pgdata` volume. The other session applied its `0003_domain` migration, which
+replaced this tree's `0003_domain_model` schema underneath a green test suite.
+
+This stack is now namespaced end to end and cannot collide again:
+
+| | this tree | the other |
+|---|---|---|
+| compose project | `ordin-build` | `legalassistant` |
+| containers | `ordin-build-*` | `ordin-*` |
+| volume | `ordin_build_pgdata` | `ordin_pgdata` |
+| postgres | `127.0.0.1:5434` | `127.0.0.1:5433` |
+| api / web | `8001` / `3001` | `8000` / `3000` |
+
+Do not un-namespace these without first checking the other checkout is gone.
 
 Two things to know:
 

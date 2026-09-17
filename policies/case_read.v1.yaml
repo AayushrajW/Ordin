@@ -1,0 +1,65 @@
+# Case read authorization.
+#
+# Versioned data, not code (security invariant 3). Every rule id that fires is
+# persisted with the decision, so "which rule let that through?" has an answer.
+#
+# Rule order matters: first match wins, and denies are written first so a seal
+# cannot be out-voted by a later allow.
+#
+# Every predicate named here must exist in domain/predicates.py. The loader resolves
+# them at read time, so a typo is a startup failure rather than a silent condition
+# that never fires. The SQL side in infra/authz_sql.py implements the same names, and
+# tests/test_policy_sql_agreement.py asserts the two agree over the seeded data -
+# without that, this file would be decorative while the query did something else.
+
+policy_id: ordin.case_read
+version: 1
+maturity: mvp
+production_adapter: OPA
+
+description: >
+  A case is readable through an in-force designation in the same organization and
+  jurisdiction, or through a case-scoped, unexpired, non-self-issued grant. Sealed
+  cases additionally require clearance beyond the ordinary level. Seniority grants
+  nothing on its own: there is no rule here that mentions rank.
+
+rules:
+  # --- denials first ------------------------------------------------------
+  - id: inactive-subject
+    effect: deny
+    when:
+      - not subject_is_active
+
+  - id: lapsed-clearance
+    effect: deny
+    when:
+      - not clearance_current
+
+  - id: sealed-without-clearance
+    effect: deny
+    when:
+      - case_is_sealed
+      - not clearance_permits_sealed
+
+  # --- grounds for access -------------------------------------------------
+  # Designation is decisive, and it is still bounded by organization and
+  # jurisdiction: a case that moves out of your jurisdiction stops being yours
+  # even while the assignment row survives.
+  - id: designated-officer
+    effect: allow
+    when:
+      - assignment_active
+      - same_organization
+      - same_jurisdiction
+
+  # The only route across an organization boundary. Never a role.
+  - id: purpose-limited-grant
+    effect: allow
+    when:
+      - grant_active
+      - grant_not_self_issued
+
+  # --- terminal -----------------------------------------------------------
+  # Required by the loader. Deny by default, fail closed.
+  - id: default-deny
+    effect: deny

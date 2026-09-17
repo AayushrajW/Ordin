@@ -47,7 +47,7 @@ async def seed() -> int:
     org_police, org_pros = uid(), uid()
     jur_north, jur_south = uid(), uid()
     post_si, post_sho, post_pp = uid(), uid(), uid()
-    user_kavya, user_rahul, user_meera = uid(), uid(), uid()
+    user_kavya, user_rahul, user_meera, user_arjun = uid(), uid(), uid(), uid()
     case_a, case_b, case_c = uid(), uid(), uid()
 
     async with engine.begin() as conn:
@@ -81,8 +81,9 @@ async def seed() -> int:
                     "clearance_valid_to) VALUES "
                     "(:u1, :si,  'SI Kavya Raut',   1, NULL), "
                     "(:u2, :sho, 'SHO Rahul Desai', 3, :future), "
-                    "(:u3, :pp,  'PP Meera Nadkarni', 2, :past)"),
-            {"u1": user_kavya, "u2": user_rahul, "u3": user_meera,
+                    "(:u3, :pp,  'PP Meera Nadkarni', 2, :past), "
+                    "(:u4, :pp,  'PP Arjun Nair',     2, :future)"),
+            {"u1": user_kavya, "u2": user_rahul, "u3": user_meera, "u4": user_arjun,
              "si": post_si, "sho": post_sho, "pp": post_pp,
              "future": NOW + timedelta(days=365), "past": NOW - timedelta(days=1)},
         )
@@ -118,16 +119,23 @@ async def seed() -> int:
              "long_ago": NOW - timedelta(days=30), "yesterday": NOW - timedelta(days=1)},
         )
 
-        # Meera is in the prosecution organization: she reaches case A only through an
-        # explicit, purpose-limited, expiring grant - never through her role. The
-        # second grant is already expired, for the expiry-denial test.
+        # The prosecutors are in a different organization: they reach a case only
+        # through an explicit, purpose-limited, expiring grant, never through a role.
+        # Arjun's clearance is current; Meera's has lapsed, so she is the case that
+        # proves the three validity clocks intersect rather than union (AZM-06) -
+        # a live grant does not save a lapsed clearance.
         await conn.execute(
             sa.text("INSERT INTO access_grant (id, grantee_id, case_id, purpose, expires_at, "
                     "granted_by) VALUES "
-                    "(:g1, :meera, :a, 'charge-sheet preparation', :future, :rahul), "
-                    "(:g2, :meera, :b, 'charge-sheet preparation', :past,   :rahul)"),
-            {"g1": uid(), "g2": uid(), "meera": user_meera, "rahul": user_rahul,
-             "a": case_a, "b": case_b,
+                    "(:g1, :arjun, :a, 'charge-sheet preparation', :future, :rahul), "
+                    "(:g2, :meera, :a, 'charge-sheet preparation', :future, :rahul), "
+                    "(:g3, :arjun, :b, 'charge-sheet preparation', :past,   :rahul), "
+                    # g4 is self-issued: lawful at every instant, and exactly why
+                    # the grant_not_self_issued predicate exists (threat INS-10).
+                    "(:g4, :arjun, :c, 'case review', :future, :arjun)"),
+            {"g1": uid(), "g2": uid(), "g3": uid(), "g4": uid(),
+             "meera": user_meera, "arjun": user_arjun, "rahul": user_rahul,
+             "a": case_a, "b": case_b, "c": case_c,
              "future": NOW + timedelta(days=30), "past": NOW - timedelta(days=2)},
         )
 
