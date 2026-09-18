@@ -183,6 +183,21 @@ Still open:
 - **The guard hook channels the 3am shortcut.** It blocks a hand-rolled role comparison
   in Python, so the fastest remaining fix is the same condition written directly into a
   SQL WHERE clause, which its regexes cannot see. Slice 3's tests are the real control.
+- **One observed flake, unexplained.**
+  `test_pipeline_idempotency.py::test_running_three_times_is_still_one_of_everything`
+  failed once and has passed on every run since (five consecutive, plus in isolation).
+  The failing run happened immediately after `verify-compose` had done a
+  `docker compose down`, so the leading hypothesis is a transient database state
+  during container restart rather than a defect in the test or the pipeline - but
+  that is a hypothesis, not a diagnosis. If it recurs, capture the assertion output
+  before rerunning: the row counts in the failure message say whether it was a
+  duplicate or a missing row, and those point at completely different causes.
+
+- **`pytest -q` hides the pass count.** `pyproject.toml` already sets `-q` in addopts,
+  so adding another makes it `-qq` and suppresses the summary line entirely - a run
+  can look like bare dots with no total. Use `python tasks.py test`, or plain
+  `pytest`, when you want the number.
+
 - **Slices 1-12 as written price at 59-70 hours** against ~34 available (three
   independent estimates). The plan commits to eight trimmed slices.
 - **The four-container path uses 203 MiB at idle**, not the ~1.15 GB feared. The
