@@ -20,17 +20,33 @@ rehearsal, which is the actual risk now.
 
 ## Acceptance criterion for the next thing
 
-There are two remaining PLAN items, both Tier C, neither blocking anything:
+**9.5h of PLAN remains, and 2.5h of it is Tier A** — an earlier draft of this file said
+"two remaining items, both Tier C", which was wrong.
 
-- **4b — upload hardening** (~2.5h). Content sniffing, size cap, qpdf sanitisation.
-  Acceptance: a PDF carrying JavaScript comes out sanitised. Upload is currently the
-  one unhardened entry point, and it is a visible demo beat.
-- **6b — corpus scale-up** (~1.5h). More documents plus a degradation pass, which is
-  what would make the OCR accuracy figure comparable to a real intake.
+| # | Slice | h | Tier | Above the hour-30 line |
+|---|---|---|---|---|
+| 5b | **Verification UI (minimum)** — case list, document view, verify-and-commit | 2.5 | **A** | **yes** |
+| 8 | Sentinel dashboard — the 11 scenarios on a page | 1.5 | C | no |
+| 4b | Upload hardening — sniffing, size cap, qpdf sanitisation | 2.5 | C | no |
+| 5b+ | Span highlighting — click a field, highlight its source span | 1.5 | C | no |
+| 6b | Corpus scale-up — 40–60 docs, degradation pass | 1.5 | C | no |
+
+**5b was deferred, not forgotten.** PLAN's hour-20 decision gate reads: cut 5b to a
+read-only document view and go straight to 7, because the pitch opener must exist. That
+is exactly what happened, so this is the plan working rather than a slip. The consequence
+is worth stating plainly: invariant 9 — only an explicit human commit writes `verified` —
+is enforced by a CHECK constraint and proved by tests, but **there is no screen on which a
+human does the committing**. Acceptance for 5b: draft fields left, scan right, and the
+commit control is the only thing in the system that writes `verified`.
 
 **The rehearsal that gated these is done, and found nothing** — see *Rehearsal record*
 below. That is a result rather than a formality: the two rehearsals before it each found
-a real defect no test caught. The demo path is now repeatable, so 4b is next on merit.
+a real defect no test caught. The demo path is now repeatable.
+
+What that rehearsal did **not** cover is the demo a judge actually watches. It exercised
+the CLI and compose paths; the visible surface is still a health page plus scrolling
+terminal output, because 5b and 8 are the two unbuilt slices. The machine is ready and
+the demo is not, and those are different problems.
 
 ## Test suite state
 
@@ -66,7 +82,10 @@ file and no partially implemented code path. 4b and 6b have not been started.
 
 ## Next concrete action
 
-`/slice 4b` — upload hardening. The rehearsal that gated it is done and green.
+`/slice 5b` — the verification UI. It is the only Tier A slice left, it is where a human
+commits a draft field to `verified`, and it is the largest hole in what a judge can see.
+`/slice 8` is the cheaper alternative at 1.5h, since the 11 scenarios already exist and
+only need a page.
 
 ## Measured, 2026-09-18
 
@@ -197,7 +216,8 @@ refuses to run against a database this checkout did not migrate.
 - [x] **11a OCR accuracy table** — CER by language, latency, caveats on the page
 - [ ] 4b Upload hardening (Tier C)
 - [ ] 6b Corpus scale-up (Tier C)
-- [ ] 5b Verification UI (Tier C — span highlighting; the API path exists)
+- [ ] **5b Verification UI (Tier A, 2.5h)** — deferred by PLAN's hour-20 gate, not cut
+- [ ] 5b+ Span highlighting (Tier C — the API path exists)
 - [ ] 8 Sentinel dashboard page (Tier C — the 11 scenarios exist and run in the CLI)
 
 Cut: 10 (completeness engine), 11's extraction metric, 12 (selective disclosure).
