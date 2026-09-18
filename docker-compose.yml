@@ -55,6 +55,9 @@ services:
     build:
       context: .
       dockerfile: docker/python.Dockerfile
+      # No OCR in the api image: OCR belongs to the worker, and an api that could
+      # run it would invite someone to call it synchronously on a request.
+      target: base
     container_name: ordin-build-api
     restart: unless-stopped
     depends_on:
@@ -89,6 +92,7 @@ services:
     build:
       context: .
       dockerfile: docker/python.Dockerfile
+      target: worker
     container_name: ordin-build-worker
     restart: unless-stopped
     depends_on:

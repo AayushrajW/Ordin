@@ -308,18 +308,33 @@ def cmd_verify_compose() -> int:
         if not api_ok:
             failures.append("api never reported healthy")
 
-        print("  checking the web page")
-        try:
-            with urllib.request.urlopen("http://127.0.0.1:3000", timeout=15) as r:
-                html = r.read().decode(errors="replace")
-            if r.status != 200:
-                failures.append(f"web returned {r.status}")
-            elif "All dependencies healthy" not in html:
-                failures.append("web page did not render the healthy state")
-            else:
-                print("    web page green")
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"web unreachable ({type(exc).__name__})")
+        # Poll rather than check once. The web container renders server-side, so it
+        # needs the api reachable AND itself finished starting; a single immediate
+        # check reported a false FAILURE while the page was in fact fine. A
+        # verification harness that cries wolf gets ignored, which is worse than not
+        # having one.
+        cfg = settings()
+        web_url = f"http://127.0.0.1:{os.environ.get('ORDIN_WEB_PORT', '3001')}"
+        print(f"  checking the web page at {web_url} (up to 90s)")
+        deadline = time.time() + 90
+        web_ok, last = False, "never responded"
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(web_url, timeout=10) as r:
+                    html = r.read().decode(errors="replace")
+                if r.status != 200:
+                    last = f"web returned {r.status}"
+                elif "All dependencies healthy" not in html:
+                    last = "web page did not render the healthy state"
+                else:
+                    web_ok = True
+                    print("    web page green")
+                    break
+            except Exception as exc:  # noqa: BLE001
+                last = f"web unreachable ({type(exc).__name__})"
+            time.sleep(3)
+        if not web_ok:
+            failures.append(last)
 
         # Invariant 11. This setting silently regresses - next.config.mjs cannot
         # express it and a machine-local opt-out does not travel with the repo.
@@ -334,8 +349,15 @@ def cmd_verify_compose() -> int:
             print("    NEXT_TELEMETRY_DISABLED=1")
 
         print("  measuring memory")
+        # Only this project's containers. `docker stats` with no arguments reports
+        # every container on the host, which silently included a second checkout's
+        # postgres in the total and overstated the footprint.
+        mine = subprocess.run(
+            ["docker", "compose", "ps", "--format", "{{.Name}}"],
+            cwd=ROOT, capture_output=True, text=True,
+        ).stdout.split()
         stats = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}"],
+            ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}", *mine],
             cwd=ROOT, capture_output=True, text=True,
         )
         total_mb = 0.0
