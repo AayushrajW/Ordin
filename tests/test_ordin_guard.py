@@ -77,6 +77,38 @@ def test_allows_an_ordinary_command():
     assert code == ALLOW, f"ordinary command was blocked (exit {code})"
 
 
+ENV_FILE = ".env"
+ENV_TEMPLATE = ".env.example"
+
+
+def test_still_blocks_committing_a_real_env_file():
+    """The narrowing must not have opened the hole the rule exists to close."""
+    for command in (f"git add {ENV_FILE}", f"git commit -m x {ENV_FILE}"):
+        code, _ = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+        assert code == BLOCK, f"{command!r} was allowed (exit {code})"
+
+
+def test_allows_the_committed_template():
+    """The template is meant to be committed - .gitignore explicitly un-ignores it.
+
+    The original rule matched it, so it fired on the safe file. A tripwire that goes
+    off on correct behaviour teaches you to reword commit messages to get past it,
+    which is worse than not having one.
+    """
+    for command in (
+        f"git add {ENV_TEMPLATE}",
+        f"git commit -m 'correct stale ports in {ENV_TEMPLATE}'",
+    ):
+        code, stderr = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+        assert code == ALLOW, f"{command!r} was blocked: {stderr}"
+
+
+def test_still_blocks_key_material_in_a_commit():
+    for command in ("git add id_rsa", "git commit -m x server.pem", "git add cert.p12"):
+        code, _ = run_hook({"tool_name": "Bash", "tool_input": {"command": command}})
+        assert code == BLOCK, f"{command!r} was allowed"
+
+
 def test_fails_closed_on_malformed_payload():
     argv = hook_command()
     proc = subprocess.run(

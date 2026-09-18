@@ -5,6 +5,7 @@
 runner is plain Python: one interpreter, identical commands on every machine, no
 install step.
 
+    python tasks.py setup           first run on a clean clone: venv, deps, .env, fixtures
     python tasks.py doctor          check the environment before blaming the code
     python tasks.py up             dev path: postgres in docker, api+worker+web native
     python tasks.py down           stop containers, leave the data
@@ -12,6 +13,7 @@ install step.
     python tasks.py test           start postgres if needed, then run the suite
     python tasks.py migrate        apply migrations only
     python tasks.py sentinel       run the security scenarios and print the result
+    python tasks.py evaluate       OCR accuracy and latency over the fixture corpus
     python tasks.py fixtures       regenerate the synthetic document corpus
     python tasks.py seed           load the demo seed (3 cases, 2 organizations)
     python tasks.py worker         run the worker alone, natively
@@ -42,6 +44,21 @@ def settings():
     from api.config import Settings
 
     return Settings()
+
+
+def dependencies_installed() -> bool:
+    """Can we import the application at all?
+
+    `doctor` must answer usefully on a machine where nothing is set up yet - that is
+    the entire situation it exists for. It used to call settings() unconditionally and
+    die with ModuleNotFoundError on a clean clone, which is the diagnostic tool
+    requiring the thing it diagnoses.
+    """
+    probe = subprocess.run(
+        [PY, "-c", "import pydantic_settings, sqlalchemy, fastapi"],
+        cwd=ROOT, capture_output=True,
+    )
+    return probe.returncode == 0
 
 
 def port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -162,6 +179,18 @@ def cmd_doctor() -> int:
         print("  docker           : NOT FOUND")
         problems += 1
 
+    env_present = (ROOT / ".env").exists()
+    deps = dependencies_installed()
+    print(f"  dependencies     : {'installed' if deps else 'NOT INSTALLED'}")
+    print(f"  tesseract        : {'present' if shutil.which('tesseract') else 'NOT FOUND (OCR will fail)'}")
+
+    if not deps or not env_present:
+        # Everything below needs the application importable and configured. Say what
+        # to do rather than crashing halfway through the report.
+        print(f"  .env             : {'present' if env_present else 'MISSING'}")
+        print("\n  not set up yet - run:  python tasks.py setup")
+        return 1
+
     cfg = settings()
     reachable = port_open(cfg.postgres_host, cfg.postgres_port)
     print(f"  postgres         : {'reachable' if reachable else 'not reachable'} "
@@ -204,6 +233,102 @@ def cmd_doctor() -> int:
 def cmd_migrate() -> int:
     run([PY, "-m", "alembic", "upgrade", "head"])
     return 0
+
+
+def cmd_setup() -> int:
+    """Everything a clean clone needs before anything else works.
+
+    Written after a clone-to-a-fresh-directory rehearsal, where the honest answer to
+    "what does a newcomer type?" turned out to be a sequence nobody had written down.
+    Idempotent: safe to re-run, and it says what it skipped.
+    """
+    import venv as venv_module
+
+    print("ordin setup\n")
+    problems = 0
+
+    # 1. Interpreter. 3.11 to match the api image (ADR 0007).
+    venv_dir = ROOT / ".venv"
+    if VENV_PY.exists():
+        print("  venv             : already present")
+    else:
+        launcher = shutil.which("py")
+        created = False
+        if launcher:
+            probe = subprocess.run([launcher, "-3.11", "--version"], capture_output=True)
+            if probe.returncode == 0:
+                print("  venv             : creating with python 3.11")
+                subprocess.run([launcher, "-3.11", "-m", "venv", str(venv_dir)], check=True)
+                created = True
+        if not created:
+            print(f"  venv             : python 3.11 not found; using {sys.version.split()[0]}")
+            print("    ! the api image is 3.11; a different interpreter here is the")
+            print("      dev/demo divergence ADR 0006's two-path test exists to catch")
+            venv_module.create(venv_dir, with_pip=True)
+            problems += 1
+
+    python = str(VENV_PY) if VENV_PY.exists() else sys.executable
+
+    # 2. Python dependencies.
+    print("  python deps      : installing")
+    subprocess.run([python, "-m", "pip", "install", "--quiet", "--upgrade", "pip"], cwd=ROOT)
+    install = subprocess.run([python, "-m", "pip", "install", "--quiet", "-e", ".[dev]"], cwd=ROOT)
+    if install.returncode != 0:
+        print("    ! pip install failed")
+        problems += 1
+
+    # 3. Configuration. Never overwrite an existing .env.
+    env_file, example = ROOT / ".env", ROOT / ".env.example"
+    if env_file.exists():
+        print("  .env             : already present, left alone")
+    elif example.exists():
+        body = example.read_text(encoding="utf-8")
+        # Replace the placeholders so the stack starts. These are local dev values
+        # for a database bound to loopback; .env is gitignored.
+        for placeholder, value in (
+            ("change_me_owner", "dev_owner_pw_local_only"),
+            ("change_me_app", "dev_app_pw_local_only"),
+            ("change_me_session_secret", "dev_session_secret_local_only"),
+        ):
+            body = body.replace(placeholder, value)
+        env_file.write_text(body, encoding="utf-8")
+        print("  .env             : created from .env.example with local dev values")
+    else:
+        print("  .env             : MISSING and no .env.example to copy")
+        problems += 1
+
+    # 4. Web dependencies, if node is here. Not fatal: the api and the security
+    #    demo work without the web tier.
+    web = ROOT / "web"
+    if (web / "node_modules").exists():
+        print("  web deps         : already present")
+    elif shutil.which("npm"):
+        print("  web deps         : installing (npm)")
+        subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=web,
+                       shell=(os.name == "nt"))
+    else:
+        print("  web deps         : npm not found - the web tier will not run")
+
+    # 5. Fixtures. Gitignored and deterministic, so they are generated not carried.
+    if list((ROOT / "fixtures" / "corpus").glob("*.pdf")):
+        print("  fixtures         : already generated")
+    else:
+        print("  fixtures         : generating")
+        subprocess.run([python, "-m", "fixtures.generate"], cwd=ROOT)
+
+    if not shutil.which("tesseract"):
+        print("\n  ! tesseract is not installed. OCR stages will fail by design rather")
+        print("    than falling back to the text layer (docs/adr/0012).")
+        problems += 1
+
+    print(f"\n  {'setup complete' if not problems else f'{problems} thing(s) need attention'}")
+    print("  next:  python tasks.py doctor")
+    return 0
+
+
+def cmd_evaluate() -> int:
+    """Slice 11a: OCR character error rate and latency over the fixture corpus."""
+    return run([PY, "evaluate.py"], check=False).returncode
 
 
 def cmd_sentinel() -> int:
@@ -436,6 +561,8 @@ COMMANDS = {
     "seed": cmd_seed,
     "fixtures": cmd_fixtures,
     "sentinel": cmd_sentinel,
+    "evaluate": cmd_evaluate,
+    "setup": cmd_setup,
     "verify-compose": cmd_verify_compose,
 }
 

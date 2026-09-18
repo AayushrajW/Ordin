@@ -73,24 +73,29 @@ rather than pushing through.
 
 ## Setup, once
 
+Superseded by `README.md`, which is where a newcomer should start. The short version:
+
 ```bash
-git init ordin && cd ordin
-mkdir -p .claude/hooks .claude/commands docs/slices docs/adr
-# copy in CLAUDE.md, BOOTSTRAP.md, .claude/settings.json,
-#   .claude/hooks/ordin-guard.py, .claude/commands/*.md, docs/STATUS.md
-chmod +x .claude/hooks/ordin-guard.py
-claude
+python tasks.py setup     # venv, dependencies, .env, fixtures
+python tasks.py doctor    # says what is still missing
 ```
 
-The hook is the part that matters most in a fast build. CLAUDE.md is context the
-model drifts from when a session gets long; a PreToolUse hook is deterministic.
-It blocks `Blockchain*` naming, `ESignService`, hand-rolled role conditionals,
-CSS-blur redaction, committed `.env` files, private keys in source and hosted LLM
-keys, and it fails closed on a malformed payload. Those are the six ways this
-project quietly stops being what the deck claims, and every one of them becomes
-more likely at 3am.
+This section used to describe creating the repository and copying files into it by
+hand, which was right before the project existed and misleading afterwards. A clone
+rehearsal showed a newcomer following it would get nowhere.
 
----
+The hook is still the part that matters most in a fast build. CLAUDE.md is context the
+model drifts from when a session gets long; a PreToolUse hook is deterministic. It
+blocks `Blockchain*` naming, `ESignService`, hand-rolled role conditionals, CSS-blur
+redaction, committed `.env` files, private keys in source and hosted LLM keys, and it
+fails closed on a malformed payload.
+
+Two things learned about it since: it was silently dead for a whole session because
+`settings.json` invoked `python3`, which on Windows is a Store alias that exits 49
+rather than 2 — `tests/test_ordin_guard.py` now asserts the configured command
+actually fires. And it channels the 3am shortcut rather than removing it: blocking a
+role conditional in Python pushes the same condition into a SQL `WHERE` clause, where
+its regexes cannot see it. Slice 3's tests are the real control there.
 
 ## What got cut, and why
 

@@ -4,21 +4,38 @@
 > no memory of any prior conversation.
 
 ## Current slice
-**None — slice 7 is complete.** Tier A and Tier B of `docs/PLAN.md` are both done.
-
-Everything from here is Tier C: upside, taken strictly in order and only if time
-allows. Per PLAN the next most valuable are **11a (OCR accuracy table, ~1h)** and
-**4b (upload hardening, ~2.5h)**.
+**None — slice 11a is complete.** Tier A, Tier B and the highest-value Tier C item
+are done.
 
 ## Acceptance criterion for current slice
-Slice 11a: OCR character error rate by language against the fixture sidecars'
-pre-render text, plus stage latency. One command, one table.
+Remaining Tier C, in `docs/PLAN.md` order: **4b upload hardening (~2.5h)**, then
+**6b corpus scale-up (~1.5h)**. Neither is started and neither blocks anything.
 
-It is honest ground truth **only** where `ocr_text.method = 'tesseract_ocr'` — rows
-recorded as `embedded_text_layer` must be excluded, or the figure is a string compared
-with itself (docs/adr/0012). The extraction precision metric stays cut as
-self-referential (PLAN R9); OCR CER is the one accuracy number this build can honestly
-report.
+Before either, the three demo commands are the thing worth rehearsing, because they
+are what a judge actually sees:
+
+    python tasks.py sentinel    11 security scenarios, each able to go red
+    python tasks.py evaluate    OCR accuracy and latency, with its caveats
+    python tasks.py verify-compose   four containers inside 8 GB
+
+## Measured, 2026-09-18
+OCR character error rate over the 10-document fixture corpus, real Tesseract over
+rasterised pages:
+
+| language | documents | chars | errors | CER |
+|---|---|---|---|---|
+| eng | 8 | 3231 | 11 | **0.34%** |
+| hin | 2 | 685 | 69 | **10.07%** |
+
+Latency p50 1.16s, p95 5.63s.
+
+**The Hindi figure is the honest finding and should be said out loud rather than
+buried.** Devanagari OCR is roughly thirty times worse than Latin here, on clean
+synthetic renders. Two consequences: any claim about bilingual support has to carry
+that number, and slice 7's redaction targeting - which relies on locating a name in
+OCR text - is correspondingly less reliable on Hindi documents. That compounds with
+accepted risk AR-6 (redaction recall is bounded by OCR recall) rather than being a
+separate problem.
 
 ## Test suite state
 **16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
@@ -34,6 +51,11 @@ decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`
 that phrasing is superseded.
 
 ## Landed this session
+- **Slice 11a** — `python tasks.py evaluate`: OCR character error rate by language
+  and stage latency, measured against the fixtures' pre-render ground truth, with the
+  caveats printed under the table rather than left to the reader.
+- **Container images repaired** — broken since slice 3a; caught by the overdue
+  `verify-compose` gate.
 - **Slice 7** — destructive redaction (remove, rasterise, rebuild the container), the
   derivative as a first-class version, a manifest that stores salted hashes rather
   than the removed text, and the disclosure rule that closes threat VIC-01. Four new
@@ -78,8 +100,8 @@ that phrasing is superseded.
 ## Half-done, and exactly where
 **Nothing is half-done.** Working tree clean, 120 tests green.
 
-Slice 7 is complete. Nothing is partially built. The remaining PLAN items are all
-Tier C and none has been started.
+Slice 11a is complete. Nothing is partially built. 4b and 6b are the only PLAN items
+left and neither is started.
 
 ## Next concrete action
 Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
@@ -225,7 +247,7 @@ Still open:
 - [x] **7 Destructive redaction + role-switch** — remove/rasterise/rebuild, VIC-01 closed
 - [ ] ——— hard stop on coding at hour 30 ———
 - [ ] 8 Sentinel dashboard (Tier C)
-- [ ] 11a OCR accuracy table (Tier C)
+- [x] **11a OCR accuracy table** — CER by language, latency, caveats on the page
 - [ ] 4b Upload hardening (Tier C)
 - [ ] 6b Corpus scale-up (Tier C)
 

@@ -36,7 +36,13 @@ RULES = [
     ),
     (
         {"Bash"},
-        r"git\s+(commit|add)\b[^\n]*(\.env|id_rsa|\.pem|\.p12|\.pfx)",
+        # `.env` but NOT `.env.example` / `.env.sample` / `.env.template`, which are
+        # templates that MUST be committed - .gitignore explicitly un-ignores the
+        # example. The original rule fired on them, which is a false positive that
+        # teaches you to reword commit messages to get past the guard. A tripwire
+        # people learn to step over is worse than no tripwire.
+        r"git\s+(commit|add)\b[^\n]*"
+        r"(\.env(?!\.example|\.sample|\.template)|id_rsa|\.pem|\.p12|\.pfx)",
         "Attempting to stage or commit a secret or .env file.",
     ),
     (
