@@ -28,9 +28,9 @@ There are two remaining PLAN items, both Tier C, neither blocking anything:
 - **6b — corpus scale-up** (~1.5h). More documents plus a degradation pass, which is
   what would make the OCR accuracy figure comparable to a real intake.
 
-**Recommended before either: rehearse twice more.** Two clean-clone rehearsals this
-session each found real defects that no test caught. BOOTSTRAP is explicit that every
-failure you will have shows up on the second clean run.
+**The rehearsal that gated these is done, and found nothing** — see *Rehearsal record*
+below. That is a result rather than a formality: the two rehearsals before it each found
+a real defect no test caught. The demo path is now repeatable, so 4b is next on merit.
 
 ## Test suite state
 
@@ -66,8 +66,7 @@ file and no partially implemented code path. 4b and 6b have not been started.
 
 ## Next concrete action
 
-`python tasks.py fresh && python tasks.py seed && python tasks.py sentinel`, on this
-machine, twice. Then `/slice 4b` if time remains.
+`/slice 4b` — upload hardening. The rehearsal that gated it is done and green.
 
 ## Measured, 2026-09-18
 
@@ -87,6 +86,26 @@ consequences: any bilingual claim must carry that number, and slice 7's redactio
 targeting — which relies on locating a name in OCR text — is correspondingly less
 reliable on Hindi documents. That compounds accepted risk AR-6 rather than sitting
 beside it.
+
+## Rehearsal record, 2026-09-18
+
+Run twice from an empty volume as prescribed, then three more times under conditions the
+prescribed sequence does not cover. All green; nothing found.
+
+| run | sequence | result |
+|---|---|---|
+| 1 | `fresh` → `seed` → `sentinel` | 11/11 |
+| 2 | `fresh` → `seed` → `sentinel` | 11/11, **14s end to end** |
+| 3 | `seed` → `sentinel` against the *existing* database | 11/11 |
+| 4 | `sentinel` twice back to back, no re-seed | 11/11 both |
+| 5 | `verify-compose` against the rebuilt volume | four containers, **206 MiB** |
+
+Runs 3 and 4 are the ones that matter on the day. A judge who says "do that again" does
+not let you drop the database first, and the prescribed sequence never tests that.
+The full suite was green (275) against the rehearsed database afterwards.
+
+**Cold start is 14 seconds**, empty volume to 11/11 — worth knowing before standing in
+front of a room.
 
 ## Environment — verified, do not re-derive
 
@@ -151,12 +170,15 @@ refuses to run against a database this checkout did not migrate.
 - **The guard hook fired on `.env.example`**, a file that must be committed. It blocked
   a correct commit twice. Narrowed, with tests asserting real secrets are still
   blocked. A tripwire that fires on correct behaviour teaches evasion.
-- **One observed flake, unexplained.** A pipeline idempotency test failed once and has
-  passed on every run since. It happened immediately after `verify-compose` tore the
-  containers down, so the leading hypothesis is transient database state during
-  restart — a hypothesis, not a diagnosis. If it recurs, capture the assertion output
-  first: the row counts distinguish a duplicate from a missing row, and those have
-  different causes.
+- **One observed flake, and its hypothesis is now weaker than it reads.** A pipeline
+  idempotency test failed once and has passed on every run since. It happened
+  immediately after `verify-compose` tore the containers down, so the leading hypothesis
+  was transient database state during restart. That exact condition was staged
+  deliberately on 2026-09-18 — teardown, immediate postgres restart, the test five times
+  with no wait — and it passed five times. A rare flake surviving five attempts is not
+  disproof, but the hypothesis should no longer be read as the answer. If it recurs,
+  capture the assertion output first: the row counts distinguish a duplicate from a
+  missing row, and those have different causes.
 - **Generating Python with a shell heredoc corrupts escapes.** `\\t` became a literal
   tab and `\\n` a real newline, producing a silently non-applied edit and a syntax
   error. Use the Edit tool for anything containing escapes.
