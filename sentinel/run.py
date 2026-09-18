@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 import sentinel.scenarios_authz  # noqa: F401,E402 - importing registers them
 import sentinel.scenarios_redaction  # noqa: F401,E402
+import sentinel.scenarios_verification  # noqa: F401,E402
 from api.config import Settings  # noqa: E402
 from api.main import create_app  # noqa: E402
 from infra.tables import app_user, case_record  # noqa: E402
@@ -30,6 +31,9 @@ class Ctx:
     client: httpx.AsyncClient
     engine: object
     ids: dict
+    # The same store the api serves bytes from, so a scenario that pushes a document
+    # through the pipeline produces one the running app can then render.
+    blobs: object = None
 
 
 async def main() -> int:
@@ -54,7 +58,9 @@ async def main() -> int:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://sentinel") as client:
-        results = await run_all(Ctx(client=client, engine=engine, ids=ids))
+        results = await run_all(
+            Ctx(client=client, engine=engine, ids=ids, blobs=app.state.blobs)
+        )
     await engine.dispose()
 
     mark = {Outcome.PASS: "PASS", Outcome.FAIL: "FAIL", Outcome.ERROR: "ERR "}

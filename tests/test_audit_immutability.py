@@ -14,6 +14,9 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from domain.enums import AuditAction
+from infra.audit_log import append_audit
+
 pytestmark = pytest.mark.requires_db
 
 
@@ -34,20 +37,26 @@ async def owner_engine(live_settings):
 
 
 async def seed_one_audit_row(engine) -> int:
-    """Insert a row as the app role and return its id. Inserting is allowed."""
+    """Insert a row as the app role and return its seq. Inserting is allowed.
+
+    Through `append_audit` rather than a hand-written INSERT, even though this file
+    is about grants and not about hashes. An earlier version wrote `prev_row_hash`
+    and `row_hash` as constants, which was harmless here and quietly corrosive
+    elsewhere: `audit_event` has no DELETE grant and `seed.py` spares it, so those
+    rows are permanent, and any claim that the chain verifies end to end became false
+    the first time this test ran. Sentinel scenario AUDIT-01 makes that claim.
+    """
     async with engine.begin() as conn:
+        await append_audit(
+            conn,
+            case_id="case-immut",
+            actor_id="user-immut",
+            action=AuditAction.DOCUMENT_VIEWED,
+            object_type="document",
+            object_id="doc-immut",
+        )
         return (
-            await conn.execute(
-                sa.text(
-                    "INSERT INTO audit_event "
-                    "(case_id, actor_id, action, object_type, object_id, utc_ts, "
-                    " prev_row_hash, row_hash) "
-                    "VALUES (:c, :a, 'document_viewed', 'document', :o, now(), :p, :h) "
-                    "RETURNING seq"
-                ),
-                {"c": "case-immut", "a": "user-immut", "o": "doc-immut",
-                 "p": "0" * 64, "h": "f" * 64},
-            )
+            await conn.execute(sa.text("SELECT max(seq) FROM audit_event"))
         ).scalar_one()
 
 

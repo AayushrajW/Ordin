@@ -17,10 +17,12 @@ from pathlib import Path
 
 from api.cases import router as cases_router
 from api.config import Settings
+from api.documents import router as documents_router
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
 from api.session import router as session_router
 from domain.policy import load_policy
+from infra.blobstore import LocalBlobStore
 
 log = logging.getLogger("ordin.api")
 
@@ -62,8 +64,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # policy must stop the process rather than deny every request at runtime while
     # looking like an outage (domain/policy.py raises PolicyError at load).
     app.state.policy = load_policy(Path(__file__).resolve().parents[1] / "policies" / "case_read.v1.yaml")
+    # One store, constructed once. A relative root resolves against the project
+    # root so the api and the worker address the same bytes without either owning
+    # the path (the worker builds its own store from the same setting).
+    blob_root = Path(settings.ordin_blob_root)
+    if not blob_root.is_absolute():
+        blob_root = Path(__file__).resolve().parents[1] / blob_root
+    app.state.blobs = LocalBlobStore(blob_root)
+
     app.include_router(session_router)
     app.include_router(cases_router)
+    app.include_router(documents_router)
 
     @app.get("/health")
     async def health() -> JSONResponse:

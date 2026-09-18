@@ -106,3 +106,9 @@ class AuditAction(StrEnum):
     GRANT_REVOKED = "grant_revoked"
     ASSIGNMENT_CHANGED = "assignment_changed"
     DISPOSAL_RECORDED = "disposal_recorded"
+    # Slice 5b. The human commit invariant 9 is about: the moment a person
+    # takes responsibility for a machine-extracted value, and the moment a
+    # person enters one by hand. Two actions, not one, because "a human agreed
+    # with the extractor" and "a human overrode it" are different claims.
+    FIELD_VERIFIED = "field_verified"
+    FIELD_ENTERED = "field_entered"

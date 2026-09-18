@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # and would ship in a public repository (threat SESS-01).
     ordin_session_secret: SecretStr = SecretStr("")
 
+    # Where `LocalBlobStore` keeps content-addressed bytes. A relative path is
+    # resolved against the project root by whoever constructs the store, so the api
+    # and the worker agree on one location without either of them owning it.
+    ordin_blob_root: str = "var/blobs"
+
     # --- derived ---
     def _dsn(self, user: str, password: SecretStr) -> str:
         return (
