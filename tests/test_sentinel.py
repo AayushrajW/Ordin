@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import sentinel.scenarios_authz  # noqa: F401 - importing registers the scenarios
+import sentinel.scenarios_redaction  # noqa: F401
 from api.main import create_app
 from infra.tables import app_user, case_record
 from sentinel.registry import REGISTRY, Outcome, Severity, run_all, scenario

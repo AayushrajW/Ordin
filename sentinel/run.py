@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import sentinel.scenarios_authz  # noqa: F401,E402 - importing registers them
+import sentinel.scenarios_redaction  # noqa: F401,E402
 from api.config import Settings  # noqa: E402
 from api.main import create_app  # noqa: E402
 from infra.tables import app_user, case_record  # noqa: E402
