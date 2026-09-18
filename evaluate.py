@@ -45,6 +45,10 @@ def main() -> int:
     measurements: list[Measurement] = []
     latencies: list[float] = []
     per_document: list[tuple[str, str, float, float]] = []
+    # Slice 6b split the corpus into clean renders and degraded scans. Averaging the
+    # two into one figure would hide the only comparison worth having: a clean render
+    # is not a scan, and the distance between them is the number to quote.
+    by_condition: dict[str, list[Measurement]] = {"clean": [], "degraded": []}
 
     print(f"\n  measuring {len(pdfs)} documents with real OCR ...\n")
     for pdf in pdfs:
@@ -68,6 +72,7 @@ def main() -> int:
         measurements.append(m)
         latencies.append(elapsed)
         per_document.append((pdf.stem, sidecar["language"], m.cer, elapsed))
+        by_condition["degraded" if sidecar.get("degraded") else "clean"].append(m)
 
     # --- the table ---------------------------------------------------------
     print("  OCR character error rate, by language")
@@ -80,6 +85,23 @@ def main() -> int:
             f"{bucket['errors']:>9}{bucket['cer'] * 100:>9.2f}%"
         )
     print("  " + "-" * 62)
+
+    if by_condition["degraded"]:
+        print("\n  clean renders vs degraded scans")
+        print("  " + "-" * 62)
+        print(f"  {'condition':<12}{'documents':>11}{'chars':>10}{'errors':>9}{'CER':>10}")
+        print("  " + "-" * 62)
+        for condition in ("clean", "degraded"):
+            rows = by_condition[condition]
+            if not rows:
+                continue
+            chars = sum(r.truth_chars for r in rows)
+            errors = sum(r.errors for r in rows)
+            print(
+                f"  {condition:<12}{len(rows):>11}{chars:>10}{errors:>9}"
+                f"{(errors / chars if chars else 0) * 100:>9.2f}%"
+            )
+        print("  " + "-" * 62)
 
     print("\n  per document")
     for name, language, cer, elapsed in per_document:
@@ -99,9 +121,11 @@ def main() -> int:
     print("    - Hindi documents are mixed-script: the field labels and the reference")
     print("      number are Latin, as bilingual forms genuinely are. The 'hin' row is")
     print("      therefore not a pure Devanagari figure.")
-    print("    - The fixtures are clean renders. Real scans are skewed, marked and")
-    print("      photographed, and would score worse - slice 6b's degradation pass is")
-    print("      what would make this comparable to a real intake.")
+    print("    - The degraded documents are tilted 0.8 degrees, rasterised at 120 dpi")
+    print("      and speckled, with no text layer. That models resolution loss, skew")
+    print("      and sensor noise. It does NOT model compression artefacts, uneven")
+    print("      lighting, fold lines, handwriting or camera perspective, so it is a")
+    print("      floor on how much worse real paper is rather than an estimate of it.")
     print("    - Extraction precision is deliberately absent: the extractors were")
     print("      written against documents this generator produced, so the figure")
     print("      would measure agreement with ourselves (PLAN R9).")

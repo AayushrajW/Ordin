@@ -16,6 +16,7 @@ Denied and nonexistent are the same 404 throughout, byte for byte, for the same 
 ids (threat INS-04). That is asserted, not assumed —
 `test_an_unreadable_case_and_a_missing_one_are_byte_identical`.
 """
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -497,6 +498,155 @@ async def field_spans(
             if w["page_no"] == page_no
         ],
     )
+
+
+# --- intake -------------------------------------------------------------------
+
+
+# The title a document is filed under. Whatever the uploader called the file is
+# untrusted text: it reaches a screen, a log line and a database row, so it is
+# stripped of path separators and control characters and truncated here rather than
+# anywhere further in.
+_SAFE_TITLE = re.compile(r"[^A-Za-z0-9 ._()\-]")
+
+
+def _clean_filename(raw: str | None) -> str:
+    candidate = (raw or "").strip().replace("\\", "/").split("/")[-1]
+    candidate = _SAFE_TITLE.sub("", candidate)[:120].strip()
+    return candidate or "untitled.pdf"
+
+
+@router.post("/cases/{case_id}/documents", status_code=202)
+async def upload_document(
+    case_id: str,
+    request: Request,
+    filename: str | None = None,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Slice 4b's visible half: upload a PDF, get a sanitised version.
+
+    **The body is the PDF itself**, not a multipart form. FastAPI's `UploadFile` needs
+    `python-multipart`, and CLAUDE.md is explicit that a dependency is asked for rather
+    than added — so the web tier parses the browser's form with the platform's own
+    `FormData` and forwards the bytes here. One fewer package, and this route is
+    simpler for it.
+
+    **It validates and versions, and then stops.** The four stages are the worker's
+    job. `docker/python.Dockerfile` states the reason: the api image deliberately has
+    no Tesseract, because an api that could run OCR invites somebody to call it
+    synchronously on a request — which is exactly what an earlier draft of this route
+    did. 202, not 201: the version exists, the thread has not run yet.
+
+    Uploading requires disclosure ORIGINAL. A purpose-limited grantee who may read
+    derivatives has no business adding evidence to the case (ADR 0014).
+
+    The sanitising happens inside `Pipeline.ingest`, so it cannot be skipped by a
+    future caller that does not go through this route.
+    """
+    from infra.blobstore import LocalBlobStore  # noqa: F401 - type only
+    from infra.intake import MAX_BYTES, UploadRejected
+    from infra.pipeline import Pipeline
+
+    now = datetime.now(timezone.utc)
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        raise NOT_FOUND
+
+    # Refuse on the declared length before reading the body, so an oversized upload is
+    # never held in memory on an 8 GB machine (threat OPS-03).
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="exceeds_size_limit")
+
+    async with request.app.state.engine.connect() as conn:
+        disclosure = await _case_disclosure(conn, policy, subject, case_id, now)
+        await conn.commit()
+    _require_original(disclosure)
+
+    data = await request.body()
+    if len(data) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="exceeds_size_limit")
+
+    # No text source and no signer: `ingest` runs no stage, so it needs neither. An
+    # api holding an OCR engine is the thing this split exists to avoid.
+    pipeline = Pipeline(blobs=request.app.state.blobs, text_source=None, signer=None)
+
+    async with request.app.state.engine.connect() as conn:
+        try:
+            document_id, version_id, sha256, _source = await pipeline.ingest(
+                conn, case_id=case_id, filename=_clean_filename(filename), data=data
+            )
+        except UploadRejected as rejected:
+            await conn.rollback()
+            # The enumerated code, never the parser's message.
+            raise HTTPException(status_code=422, detail=rejected.code.value)
+
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.DOCUMENT_UPLOADED,
+            object_type="document_version",
+            object_id=version_id,
+            at=now,
+        )
+        await conn.commit()
+
+    return {
+        "document_id": document_id,
+        "version_id": version_id,
+        "sha256": sha256,
+        "status": "queued",
+        "note": "OCR, extraction, signing and anchoring run in the worker.",
+    }
+
+
+class RedactRequest(BaseModel):
+    field_ids: list[str] = Field(min_length=1, max_length=64)
+
+
+@router.post("/versions/{version_id}/redact", status_code=201)
+async def redact_version(
+    version_id: str,
+    body: RedactRequest,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Produce a redacted derivative from the named fields. Slice 7, reachable.
+
+    Requires disclosure ORIGINAL for the obvious reason: you cannot redact a document
+    you are not permitted to read, and a grantee holding a derivative must not be able
+    to make further derivatives of a parent they cannot see.
+
+    A refusal to locate anything is a **422, not a silent success**. Returning a
+    "redacted" copy identical to the original would be handed onward as though a name
+    had been removed from it.
+    """
+    from infra.redaction_service import RedactionUnavailable, create_redacted_version
+
+    now = datetime.now(timezone.utc)
+    async with request.app.state.engine.connect() as conn:
+        _, case_id, disclosure = await _resolve_version(conn, policy, subject, version_id, now)
+        _require_original(disclosure)
+
+        try:
+            result = await create_redacted_version(
+                conn,
+                request.app.state.blobs,
+                parent_version_id=version_id,
+                case_id=case_id,
+                field_ids=body.field_ids,
+                actor_id=subject.user_id,
+                at=now,
+            )
+        except RedactionUnavailable:
+            await conn.rollback()
+            raise HTTPException(status_code=422, detail="nothing_located_to_remove")
+        await conn.commit()
+    return result
 
 
 # --- the human commit ---------------------------------------------------------

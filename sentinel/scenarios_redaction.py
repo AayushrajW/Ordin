@@ -62,10 +62,22 @@ async def _ensure_derivative(ctx) -> None:
 
         document_id, parent_id, derivative_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         regions, names = _regions()
-        result = redact(FIXTURE.read_bytes(), regions)
+        original_bytes = FIXTURE.read_bytes()
+        result = redact(original_bytes, regions)
+
+        # Both versions' bytes go into the store under their real digests. An earlier
+        # version wrote placeholder digests and no bytes, which was enough for these
+        # scenarios - they only read the database - and meant the verification screen
+        # could not render either page. A fixture that exists only in the rows is a
+        # fixture that is fine until something tries to use it.
+        original_sha = ctx.blobs.put(original_bytes)
+        derivative_sha = ctx.blobs.put(result.pdf_bytes)
 
         await conn.execute(
-            sa.text("INSERT INTO document (id, case_id, title) VALUES (:i,:c,'Specimen')"),
+            sa.text(
+                "INSERT INTO document (id, case_id, title) "
+                "VALUES (:i,:c,'Complaint record (specimen)')"
+            ),
             {"i": document_id, "c": case_id},
         )
         await conn.execute(
@@ -73,7 +85,7 @@ async def _ensure_derivative(ctx) -> None:
                 "INSERT INTO document_version (id, document_id, version_no, sha256) "
                 "VALUES (:i,:d,1,:h)"
             ),
-            {"i": parent_id, "d": document_id, "h": "a" * 64},
+            {"i": parent_id, "d": document_id, "h": original_sha},
         )
         # The original's derived text, which is the thing REDACT-03 must find and
         # then be refused. Without it that scenario would pass vacuously.
@@ -102,7 +114,7 @@ async def _ensure_derivative(ctx) -> None:
                 " derived_from_version_id, redaction_manifest_hash) "
                 "VALUES (:i,:d,2,:h,:p,:m)"
             ),
-            {"i": derivative_id, "d": document_id, "h": "b" * 64,
+            {"i": derivative_id, "d": document_id, "h": derivative_sha,
              "p": parent_id, "m": result.manifest_hash},
         )
         await conn.commit()

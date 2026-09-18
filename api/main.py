@@ -20,6 +20,7 @@ from api.config import Settings
 from api.documents import router as documents_router
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
+from api.sentinel_routes import router as sentinel_router
 from api.session import router as session_router
 from domain.policy import load_policy
 from infra.blobstore import LocalBlobStore
@@ -72,9 +73,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         blob_root = Path(__file__).resolve().parents[1] / blob_root
     app.state.blobs = LocalBlobStore(blob_root)
 
+    # **No OCR engine here, on purpose.** docker/python.Dockerfile gives the api image
+    # no Tesseract, because an api that could run OCR invites somebody to call it
+    # synchronously on a request. The upload route validates and versions; the worker
+    # runs the thread (worker/intake_queue.py).
+
     app.include_router(session_router)
     app.include_router(cases_router)
     app.include_router(documents_router)
+    app.include_router(sentinel_router)
 
     @app.get("/health")
     async def health() -> JSONResponse:

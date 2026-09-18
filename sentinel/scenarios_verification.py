@@ -24,11 +24,17 @@ async def _sign_in(ctx, key: str) -> None:
 
 
 async def _ensure_document(ctx) -> tuple[str, str]:
-    """Make sure the officer's case holds a processed document. Returns (case, version).
+    """Push a specimen through the real pipeline. Returns (case_id, version_id).
 
-    Sentinel runs from a clean database — `fresh && seed && sentinel` is the demo
-    sequence — so establishing the precondition is the scenario's job. Slice 7's
-    scenarios do the same thing for the same reason.
+    **It always runs the pipeline** rather than reusing whatever document happens to
+    be in the case. An earlier version took the first document it found, which after
+    slice 7's scenarios ran was a hand-inserted parent with a placeholder digest and
+    no bytes in the store — so VERIFY-01 was committing a row that no extractor had
+    produced, and reporting that as proof that the pipeline drafts. The scenario
+    passed and meant nothing, which is the exact failure the registry docstring names.
+
+    Running it every time is safe and is itself part of the claim: the pipeline is
+    idempotent, so the second call produces no second version, field set or anchor.
     """
     from pathlib import Path
 
@@ -44,10 +50,6 @@ async def _ensure_document(ctx) -> tuple[str, str]:
     assert cases, "the officer can see no case at all; the seed is not what it was"
     case_id = cases[0]["id"]
 
-    documents = (await ctx.client.get(f"/cases/{case_id}/documents")).json()
-    if documents:
-        return case_id, documents[0]["versions"][0]["id"]
-
     async with ctx.engine.begin() as conn:
         actor = (
             await conn.execute(sa.text("SELECT id FROM app_user LIMIT 1"))
@@ -56,8 +58,8 @@ async def _ensure_document(ctx) -> tuple[str, str]:
             blobs=ctx.blobs,
             # The text layer rather than Tesseract: this scenario is about who may
             # write `verified`, and a real OCR pass would add half a minute to the
-            # demo run without changing what it proves. OCR itself is measured by
-            # `tasks.py evaluate`.
+            # demo run without changing what it proves. OCR accuracy is measured
+            # separately by `tasks.py evaluate`.
             text_source=EmbeddedTextLayer(),
             signer=SimulatedESignProvider("sentinel"),
             anchors=LocalAnchorStore(),
@@ -65,10 +67,11 @@ async def _ensure_document(ctx) -> tuple[str, str]:
         result = await pipeline.run(
             conn,
             case_id=uuid.UUID(case_id),
-            filename="complaint-0001.pdf",
+            filename="verification-specimen.pdf",
             data=(root / "fixtures" / "corpus" / "complaint-0001.pdf").read_bytes(),
             actor_id=actor,
         )
+    assert result.ok, f"the pipeline failed: {[s.stage for s in result.stages]}"
     return case_id, result.version_id
 
 

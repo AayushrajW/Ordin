@@ -1,128 +1,93 @@
 /**
- * System health page.
+ * Case list — the front page of the product.
  *
- * This tier **renders and enforces nothing**. Every authorization decision belongs
- * at the API, inside the data query (invariants 1 and 3). Gating anything here would
- * be gating that an attacker skips by calling the API directly (threat EXT-06), and
- * slice 1b is where that habit is set.
+ * This list is not filtered here. It arrives already filtered, because the policy
+ * predicate sits inside the SQL `WHERE` clause that produced it (invariant 1). The
+ * count beside the heading comes from `/cases/count`, a separate endpoint that
+ * applies the same predicate inside the aggregate — so it is the number of cases this
+ * subject may see, not a total they may not.
  *
- * It also does not surface a raw error body. `/health` restricts itself to an
- * enumerated set of reasons precisely so nothing carrying a DSN or a driver message
- * can reach a screen (invariant 12); re-introducing that here by rendering a caught
- * exception would undo it.
+ * Switching identity in the bar above changes what this page contains. That is the
+ * demo: same URL, same code path, different subject.
  */
+import IdentityBar from "./components/IdentityBar";
+import { currentSubject, get, type CaseRecord } from "./lib/api";
+
 export const dynamic = "force-dynamic";
 
-const API_ORIGIN = process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000";
-
-type Check = {
-  name: string;
-  status: "up" | "down";
-  latency_ms: number | null;
-  reason: string | null;
+const STATE_LABEL: Record<string, string> = {
+  registered: "Registered",
+  under_investigation: "Under investigation",
+  filed: "Filed",
+  in_trial: "In trial",
+  closed: "Closed",
 };
 
-type HealthReport = {
-  status: "healthy" | "unhealthy";
-  version: string;
-  checks: Check[];
-};
-
-async function fetchHealth(): Promise<HealthReport | null> {
-  try {
-    const response = await fetch(`${API_ORIGIN}/health`, { cache: "no-store" });
-    // 503 is an expected, meaningful response here, not a transport failure.
-    return (await response.json()) as HealthReport;
-  } catch {
-    // Deliberately no error detail: see the file docstring.
-    return null;
-  }
-}
-
-function StatusPill({ up }: { up: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        up ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`h-1.5 w-1.5 rounded-full ${up ? "bg-emerald-600" : "bg-red-600"}`}
-      />
-      {up ? "up" : "down"}
-    </span>
-  );
-}
-
-export default async function HealthPage() {
-  const report = await fetchHealth();
-  const healthy = report?.status === "healthy";
+export default async function CaseListPage() {
+  const subject = await currentSubject();
+  const cases = subject ? ((await get<CaseRecord[]>("/cases?limit=50")) ?? []) : [];
+  const counted = subject ? await get<{ count: number }>("/cases/count") : null;
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Ordin</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Case-centric evidence intelligence · system health
-        </p>
-      </header>
-
-      <section
-        className={`rounded-lg border p-5 ${
-          healthy ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
-        }`}
-      >
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-base font-medium">
-            {report === null
-              ? "API unreachable"
-              : healthy
-                ? "All dependencies healthy"
-                : "Degraded"}
-          </h2>
-          {report && (
-            <span className="text-xs text-slate-500">v{report.version}</span>
-          )}
-        </div>
-
-        {report === null ? (
-          <p className="mt-3 text-sm text-slate-600">
-            No response from the API at {API_ORIGIN}. Start it with{" "}
-            <code className="rounded bg-white px-1 py-0.5 text-xs">
-              python tasks.py up
-            </code>
-            .
-          </p>
+    <>
+      <IdentityBar current={subject} returnTo="/" />
+      <main className="mx-auto max-w-6xl px-6 py-10">
+        {!subject ? (
+          <div className="rounded-lg border border-slate-200 bg-white p-6">
+            <h1 className="text-lg font-medium">Choose a specimen identity to begin</h1>
+            <p className="mt-2 max-w-2xl text-sm text-slate-600">
+              Every screen in Ordin is rendered from what the chosen subject is
+              permitted to see. Nothing on this tier filters anything — the decision
+              is made inside the database query, so an identity with no route to a
+              case cannot reach it by calling the API directly either.
+            </p>
+          </div>
         ) : (
-          <ul className="mt-4 divide-y divide-slate-200/70">
-            {report.checks.map((check) => (
-              <li
-                key={check.name}
-                className="flex items-center justify-between py-2.5"
-              >
-                <span className="font-mono text-sm">{check.name}</span>
-                <span className="flex items-center gap-3">
-                  {check.status === "up" && check.latency_ms !== null && (
-                    <span className="text-xs tabular-nums text-slate-500">
-                      {check.latency_ms} ms
-                    </span>
-                  )}
-                  {check.reason && (
-                    <span className="text-xs text-slate-500">{check.reason}</span>
-                  )}
-                  <StatusPill up={check.status === "up"} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          <>
+            <header className="mb-6 flex items-baseline justify-between">
+              <h1 className="text-xl font-semibold tracking-tight">Cases</h1>
+              <span className="text-sm text-slate-500">
+                {counted?.count ?? cases.length} visible to {subject.display_name}
+              </span>
+            </header>
 
-      <p className="mt-6 text-xs text-slate-400">
-        This page renders health only. It enforces no authorization — every access
-        decision is made at the API, inside the data query.
-      </p>
-    </main>
+            {cases.length === 0 ? (
+              <p className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">
+                No cases. This subject holds neither a designation nor an unexpired
+                grant that reaches one — which is a result, not an error.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                {cases.map((c) => (
+                  <li key={c.id}>
+                    <a
+                      href={`/cases/${c.id}`}
+                      className="flex items-center justify-between px-5 py-4 hover:bg-slate-50"
+                    >
+                      <span>
+                        <span className="font-mono text-sm font-medium">{c.reference}</span>
+                        <span className="ml-3 text-sm text-slate-500">
+                          {STATE_LABEL[c.state] ?? c.state}
+                        </span>
+                      </span>
+                      {c.access_class === "sealed" && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                          sealed
+                        </span>
+                      )}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <p className="mt-6 max-w-3xl text-xs text-slate-400">
+              Case states are generic procedural stages, not confirmed Indian statutory
+              ones. They are placeholders pending a citation (docs/adr/0008).
+            </p>
+          </>
+        )}
+      </main>
+    </>
   );
 }

@@ -174,3 +174,38 @@ async def test_the_anchor_matches_the_stored_digest(ran):
         )
     ).scalar_one()
     assert anchored == result.content_sha256
+
+
+async def test_confidence_is_on_a_zero_to_one_scale(ran):
+    """One scale across the schema, asserted because it was wrong and looked fine.
+
+    Tesseract reports confidence as 0..100 and it was stored raw, so
+    `ocr_text.mean_confidence` held 92.5 beside `extracted_field.confidence` holding
+    1.0 - same name, same type, different meaning. Nothing failed; the screen printed
+    "mean confidence 9252.6%" and that is the only reason anyone looked. A threshold or
+    a comparison spanning the two would have been silently wrong and stayed green.
+    """
+    conn, result = ran
+    row = (
+        await conn.execute(
+            sa.text("SELECT mean_confidence FROM ocr_text WHERE version_id = :v"),
+            {"v": result.version_id},
+        )
+    ).mappings().one()
+    assert 0.0 < row["mean_confidence"] <= 1.0, row["mean_confidence"]
+
+    top = (
+        await conn.execute(
+            sa.text("SELECT max(confidence) AS top FROM ocr_word WHERE version_id = :v"),
+            {"v": result.version_id},
+        )
+    ).scalar_one()
+    assert top is None or top <= 1.0, top
+
+    fields = (
+        await conn.execute(
+            sa.text("SELECT max(confidence) AS top FROM extracted_field WHERE version_id = :v"),
+            {"v": result.version_id},
+        )
+    ).scalar_one()
+    assert fields is None or fields <= 1.0, fields

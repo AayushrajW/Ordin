@@ -28,6 +28,15 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
+  // Next 16 writes CLAUDE.md and AGENTS.md into this directory on first dev run.
+  // Unasked-for files are bad enough; a CLAUDE.md under web/ would also shadow the
+  // project's own instructions for anyone working in this tier.
+  agentRules: false,
+
+  // The dev server is reached at 127.0.0.1 as well as localhost on this machine.
+  // Development only: it has no effect on `next start`, which the demo path runs.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
+
   async headers() {
     return [
       {

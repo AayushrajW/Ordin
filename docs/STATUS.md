@@ -8,199 +8,207 @@
 ```bash
 python tasks.py setup     # venv, dependencies, .env, fixtures — safe to re-run
 python tasks.py doctor    # says what is missing and what to type; works on a bare clone
-python tasks.py test      # 275 tests
+python tasks.py demo      # fresh database, seed, and documents ingested through the pipeline
+python tasks.py up        # postgres in docker; api, worker and web native
 ```
+
+Then open **http://127.0.0.1:3001** and pick a specimen identity.
 
 `README.md` is the entry point. This file is the state of the build.
 
 ## Current slice
 
-**None. Tier A, Tier B and slice 11a are complete.** The build is ahead of the
-rehearsal, which is the actual risk now.
+**None. PLAN is complete.** Every slice in the build order is built, including the
+Tier C items that were listed as optional.
 
-## Acceptance criterion for the next thing
+## What a demo looks like
 
-**9.5h of PLAN remains, and 2.5h of it is Tier A** — an earlier draft of this file said
-"two remaining items, both Tier C", which was wrong.
-
-| # | Slice | h | Tier | Above the hour-30 line |
-|---|---|---|---|---|
-| 5b | **Verification UI (minimum)** — case list, document view, verify-and-commit | 2.5 | **A** | **yes** |
-| 8 | Sentinel dashboard — the 11 scenarios on a page | 1.5 | C | no |
-| 4b | Upload hardening — sniffing, size cap, qpdf sanitisation | 2.5 | C | no |
-| 5b+ | Span highlighting — click a field, highlight its source span | 1.5 | C | no |
-| 6b | Corpus scale-up — 40–60 docs, degradation pass | 1.5 | C | no |
-
-**5b was deferred, not forgotten.** PLAN's hour-20 decision gate reads: cut 5b to a
-read-only document view and go straight to 7, because the pitch opener must exist. That
-is exactly what happened, so this is the plan working rather than a slip. The consequence
-is worth stating plainly: invariant 9 — only an explicit human commit writes `verified` —
-is enforced by a CHECK constraint and proved by tests, but **there is no screen on which a
-human does the committing**. Acceptance for 5b: draft fields left, scan right, and the
-commit control is the only thing in the system that writes `verified`.
-
-**The rehearsal that gated these is done, and found nothing** — see *Rehearsal record*
-below. That is a result rather than a formality: the two rehearsals before it each found
-a real defect no test caught. The demo path is now repeatable.
-
-What that rehearsal did **not** cover is the demo a judge actually watches. It exercised
-the CLI and compose paths; the visible surface is still a health page plus scrolling
-terminal output, because 5b and 8 are the two unbuilt slices. The machine is ready and
-the demo is not, and those are different problems.
+1. `python tasks.py demo` — four documents ingested through the real pipeline, one with
+   a redacted derivative, fourteen fields left as drafts.
+2. `python tasks.py up`, then http://127.0.0.1:3001.
+3. **SI Kavya Raut** (designated): sees one case of three, opens the complaint, sees the
+   original with draft fields and their provenance. Clicking a field highlights the OCR
+   words it was read from. Pressing *Verify* is the only thing in the system that writes
+   `verified`, and it names her.
+4. **PP Arjun Nair** (purpose-limited grant, other organization): same URL, receives the
+   redacted derivative only. The original's version id returns 404 when named directly,
+   and so does its OCR text.
+5. **PP Meera Nadkarni** (live grant, lapsed clearance): sees nothing. Three validity
+   clocks intersect rather than union.
+6. **/sentinel** — fifteen scenarios run live against the application on every load.
+   Break something on purpose and reload to watch a critical row go red.
 
 ## Test suite state
 
-**275 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
-`tests/test_ordin_guard.py` (7 tests, standalone).
+**325 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+`tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **15/15** from a clean
+database.
+
+**Do not run two suites against one database.** A session-scoped guard in
+`tests/conftest.py` refuses the second one with an explanation — see *Surprising*
+below, because this was the "unexplained flake" for weeks.
 
 `pytest -q` **hides the pass count** — `pyproject.toml` already sets `-q` in addopts, so
-a second one makes it `-qq` and suppresses the summary. A full run then looks like bare
-dots with no total, which is how a failure gets scrolled past. Use `tasks.py test`.
+a second one makes it `-qq`. Use `tasks.py test`.
 
 ## Landed this session
 
-- **Slice 3** (3a `887f762`, 3b `5fdb06d`) — policy as versioned data, one predicate
-  registry proven to agree across Python and SQL, the predicate inside six query
-  surfaces, `SimulatedSubjectProvider`, `policy_decision` persistence, HTTP routes,
-  and the Sentinel scenario registry.
-- **Slice 4a** (`314406e`) — `BlobStore`, `LocalAnchorStore`, `disposition`, five-state
-  `verify()`. CLAUDE.md invariant 5 amended per ADR 0010.
-- **Slice 6a** (`29b8bf4`) — 10 fixture documents with ground-truth sidecars.
-- **Slice 5a** (`553b40d`) — the golden thread, headless and idempotent.
-- **Slice 7** (`aa3a9b1`) — destructive redaction, and the disclosure rule that closes
-  threat VIC-01.
-- **Slice 11a** (`929c30d`) — OCR accuracy table with its caveats printed.
-- **Container images repaired** (`97eae52`) — broken since slice 3a.
-- **Clean-clone setup** (`c919afc`) — `tasks.py setup`, README, `doctor` that works on
-  a bare clone.
-- ADRs 0008–0013. Module briefs 03, 04a, 05a, 07.
+- **Slice 5b — verification UI** (Tier A). Case list, case view, the verify-and-commit
+  screen with provenance on the page, corrections, manual entry, and the redact action.
+  The human commit invariant 9 describes was until now unreachable.
+- **Slice 5b+ — span highlighting.** Selecting a field highlights the OCR word boxes it
+  was read from, positioned as percentages of the page so the overlay tracks any width.
+- **Slice 8 — Sentinel dashboard.** Runs the scenarios live on every load; never renders
+  a stored result (ADR 0015).
+- **Slice 4b — upload hardening.** Size cap, content sniffing, structural sanitisation
+  with PyMuPDF rather than qpdf (ADR 0016), inside `Pipeline.run` so no caller can skip
+  it. The sanitiser re-scans its own output and refuses rather than lying.
+- **Slice 6b — corpus scale-up.** 48 seeded documents, 10 of them degraded scans.
+- **`infra/audit_log.py`** — the first thing in the build that writes the audit chain,
+  serialised by a Postgres advisory lock so two appenders cannot fork it.
+- **`infra/redaction_service.py`** — slice 7 had the algorithm and no persistence path.
+  Redaction is now a product action driven by the field spans 5b+ computes.
+- **`worker/intake_queue.py`** — the Postgres queue CLAUDE.md decided on and nothing
+  had built. The upload route versions and answers 202; the worker claims with
+  `FOR UPDATE SKIP LOCKED` and runs the thread (ADR 0019). The api keeps no OCR engine.
+- **`demo.py` / `tasks.py demo`** — one command from clean checkout to a case file.
+- ADRs 0014–0019. Module briefs 04b, 05b, 06b, 08. Migration 0008.
 
 ## Half-done, and exactly where
 
-**Nothing is half-done.** Working tree clean, 275 tests green, no partially written
-file and no partially implemented code path. 4b and 6b have not been started.
+**Nothing is half-done.** Working tree committed, 325 tests green, no partially written
+file and no partially implemented code path.
 
-## Next concrete action
+## Measured, 2026-09-19
 
-`/slice 5b` — the verification UI. It is the only Tier A slice left, it is where a human
-commits a draft field to `verified`, and it is the largest hole in what a judge can see.
-`/slice 8` is the cheaper alternative at 1.5h, since the 11 scenarios already exist and
-only need a page.
-
-## Measured, 2026-09-18
-
-OCR character error rate, real Tesseract over rasterised pages, 10-document fixture
-corpus:
+OCR character error rate, real Tesseract over rasterised pages, 48-document corpus:
 
 | language | documents | chars | errors | CER |
 |---|---|---|---|---|
-| eng | 8 | 3231 | 11 | **0.34%** |
-| hin | 2 | 685 | 69 | **10.07%** |
+| eng | 37 | 14841 | 492 | **3.32%** |
+| hin | 11 | 4052 | 837 | **20.66%** |
 
-Latency p50 1.16s, p95 5.63s. Four containers: 230 MiB total.
+| condition | documents | chars | errors | CER |
+|---|---|---|---|---|
+| clean renders | 38 | 15130 | 306 | **2.02%** |
+| degraded scans | 10 | 3763 | 1023 | **27.19%** |
 
-**The Hindi figure is the honest finding and should be said out loud.** Devanagari is
-roughly thirty times worse than Latin here, on clean synthetic renders. Two
-consequences: any bilingual claim must carry that number, and slice 7's redaction
-targeting — which relies on locating a name in OCR text — is correspondingly less
-reliable on Hindi documents. That compounds accepted risk AR-6 rather than sitting
-beside it.
+Latency p50 1.16s, p95 2.42s. Four containers: 317 MiB total (measured after the
+worker gained real work; it was 206 MiB when the worker only beat).
 
-## Rehearsal record, 2026-09-18
+**Three findings to say out loud rather than bury:**
 
-Run twice from an empty volume as prescribed, then three more times under conditions the
-prescribed sequence does not cover. All green; nothing found.
+- **Degradation costs an order of magnitude.** 2.02% on clean renders against 27.19% on
+  a mild synthetic degradation — tilt, 120 dpi, speckle, no text layer. The earlier
+  0.34% headline was true of ten clean renders and is not a claim about real intake.
+- **Hindi is roughly six times worse than English** and was ten times worse on the clean
+  corpus. Any bilingual claim carries that number.
+- **Tesseract misreads digits on clean pages.** On the specimen complaint it reads the
+  complainant's name correctly and gets the phone number and the case reference wrong.
+  Those arrive as drafts for a human to fix, which is the argument for the human commit
+  rather than an embarrassment.
 
-| run | sequence | result |
-|---|---|---|
-| 1 | `fresh` → `seed` → `sentinel` | 11/11 |
-| 2 | `fresh` → `seed` → `sentinel` | 11/11, **14s end to end** |
-| 3 | `seed` → `sentinel` against the *existing* database | 11/11 |
-| 4 | `sentinel` twice back to back, no re-seed | 11/11 both |
-| 5 | `verify-compose` against the rebuilt volume | four containers, **206 MiB** |
-
-Runs 3 and 4 are the ones that matter on the day. A judge who says "do that again" does
-not let you drop the database first, and the prescribed sequence never tests that.
-The full suite was green (275) against the rehearsed database afterwards.
-
-**Cold start is 14 seconds**, empty volume to 11/11 — worth knowing before standing in
-front of a room.
+All three compound accepted risk AR-6: redaction targeting depends on locating a value
+in OCR text, so it is least reliable exactly where the documents are worst.
 
 ## Environment — verified, do not re-derive
 
-- Docker Desktop 29.8.0. Installs **per-user** to `%LOCALAPPDATA%\Programs\DockerDesktop`,
-  not `C:\Program Files\Docker`.
+- Docker Desktop 29.8.0. Installs **per-user** to `%LOCALAPPDATA%\Programs\DockerDesktop`.
 - WSL2 capped at 1.86 GB by `~/.wslconfig`.
 - **This stack is namespaced end to end**: compose project `ordin-build`, containers
   `ordin-build-*`, volume `ordin_build_pgdata`, postgres `127.0.0.1:5434`, api 8001,
-  web 3001. Every port differs from 5432 (a native PostgreSQL 17 service), and from
-  5433/8000/3000 which belong to a second checkout at `D:\Legal Assistant`.
-- Python **3.11.9** in `.venv`, pinned to match the api image. The machine also has
-  3.10 and 3.13; always use `.venv/Scripts/python.exe`.
+  web 3001 — **in both paths**. The native dev loop used to run the web on 3000, which
+  belongs to the second checkout; `tasks.py up` now passes the port explicitly.
+- Python **3.11.9** in `.venv`. The machine also has 3.10 and 3.13; always use
+  `.venv/Scripts/python.exe`.
 - Tesseract 5.5.0 with `eng` and `hin`.
+- `var/blobs/` holds document bytes for the dev loop. Gitignored; regenerated by
+  `tasks.py demo`.
 
 ## WARNING — a divergent duplicate of this project exists
 
-`D:\Legal Assistant` is the old path of this checkout. It was **copied, not moved**,
-and a second Claude Code session then built in it independently — slices 3–7 work,
-uncommitted, forked from `91a46b5`.
+`D:\Legal Assistant` is the old path of this checkout. It was **copied, not moved**, and
+a second session then built in it independently — slices 3–7 work, uncommitted, forked
+from `91a46b5`.
 
 **This tree is the project**, by the builder's decision. The other has been left
 untouched; deleting it is the builder's call.
 
-The two trees shared a postgres container until they were namespaced, because both
-compose files declared identical `container_name` values and those are **globally
-unique in Docker**. The other tree migrated over this one's schema. `tasks.py test` now
-refuses to run against a database this checkout did not migrate.
-
 ## Open questions
 
 1. **Time authority.** Application clock or database clock. Pick one — the database
-   boundary is cheapest and survives container clock skew — and write the ADR. A hash
-   chain proves order, never time (threat EVD-05).
+   boundary is cheapest — and write the ADR. A hash chain proves order, never time
+   (threat EVD-05).
 2. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
-   version, so it could be OCR'd, extracted, indexed and anchored, producing a second
-   field set derived from redacted content. Currently it is not, by omission rather
-   than by decision.
+   version, so it could be OCR'd, extracted and anchored, producing a second field set
+   derived from redacted content. Currently it is not, by omission rather than decision.
 3. **Case state names are placeholders.** `registered / under_investigation / filed /
-   in_trial / closed` are generic procedural stages, not confirmed Indian statutory
-   ones (ADR 0008). Check against a source before they appear in UI copy or the deck.
-   Transitions are data, so the fix is one table.
+   in_trial / closed` are generic procedural stages, not confirmed Indian statutory ones
+   (ADR 0008). Check against a source before they appear in the deck.
 4. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation still pending. It
    appears in no document, deck or fixture until supplied.
 5. **Statutory citations.** Nothing in this build cites a section number, and no
-   extractor pattern matches one. If one enters anywhere it needs a source.
+   extractor pattern matches one.
 6. Team ID for the SIH submission still unknown.
 
 ## Surprising, and worth not rediscovering
 
-- **The container images were broken for four slices.** `docker/python.Dockerfile` was
-  written at slice 1b and never learned about `domain/`, `infra/`, `sentinel/` or
-  `policies/`; the api died at import from slice 3a onward. The dev loop runs from the
-  source tree, so nothing noticed. ADR 0006 schedules `verify-compose` at two gates
-  precisely for this; only the second gate was run.
-- **Three controls looked applied and did nothing.** `telemetry: false` is not a valid
-  Next config key (Next rejects it and keeps posting; only the env var works). The
-  first database-identity guard read the revision via `docker compose exec`, so it
-  always reported our own container whatever the port said. A token-forgery test
-  "tampered" by string-replacing a base64 payload, so it matched nothing and tested an
-  unmodified token. Each was caught only by testing the control against the condition
-  it exists to catch.
-- **The guard hook fired on `.env.example`**, a file that must be committed. It blocked
-  a correct commit twice. Narrowed, with tests asserting real secrets are still
-  blocked. A tripwire that fires on correct behaviour teaches evasion.
-- **One observed flake, and its hypothesis is now weaker than it reads.** A pipeline
-  idempotency test failed once and has passed on every run since. It happened
-  immediately after `verify-compose` tore the containers down, so the leading hypothesis
-  was transient database state during restart. That exact condition was staged
-  deliberately on 2026-09-18 — teardown, immediate postgres restart, the test five times
-  with no wait — and it passed five times. A rare flake surviving five attempts is not
-  disproof, but the hypothesis should no longer be read as the answer. If it recurs,
-  capture the assertion output first: the row counts distinguish a duplicate from a
-  missing row, and those have different causes.
-- **Generating Python with a shell heredoc corrupts escapes.** `\\t` became a literal
-  tab and `\\n` a real newline, producing a silently non-applied edit and a syntax
-  error. Use the Edit tool for anything containing escapes.
+- **The "unexplained flake" was two test suites sharing one database.** Nearly every
+  database test calls `seed()`, which `TRUNCATE ... CASCADE`s the case tables, so a
+  second concurrent suite deletes the first's rows mid-test. It surfaces somewhere
+  unrelated — a version that should have been found, a foreign key valid a moment
+  earlier — and in a different test each run, which reads exactly like flakiness. The
+  recorded hypothesis (transient state after a container restart) was wrong in the
+  direction that stops you looking: it blamed the environment for something reproducible
+  on demand. `tests/conftest.py` now refuses the second run and says why.
+- **A hardening step broke an unrelated reliability guarantee.** Sanitisation went in
+  front of version creation, and version identity was the digest of the stored bytes —
+  so it depended on PyMuPDF serialising identically every time. It very nearly does.
+  Migration 0008 records `source_sha256`, what arrived, and identity keys on that
+  (ADR 0017). The general rule: anything upstream of content-addressed storage must be a
+  pure function of its input, and if it cannot be, identity must not depend on it.
+- **Sanitisation is deterministic but not a fixed point.** `sanitise(sanitise(x))`
+  differs from `sanitise(x)` about one specimen in twenty-five, because mupdf compacts
+  object numbering differently on a second save. An earlier test asserted the fixed
+  point, passed most of the time, and failed once per full run in a different file each
+  time — a test asserting a property the library never offered is worse than no test.
+- **Two columns named `confidence` were on different scales.** Tesseract reports 0–100
+  and it was stored raw, beside `extracted_field.confidence` holding 0–1. Nothing
+  failed; the screen printed "mean confidence 9252.6%", which is the only reason anyone
+  looked. Normalised at the boundary, with a test.
+- **The pytest suite was running 11 of 15 Sentinel scenarios.** Three places imported
+  the scenario modules by name and the test's list fell behind, so slice 5b's four
+  scenarios only ever ran by hand — the newest and least proven. Registration is
+  discovery now, with a test asserting it reaches every file.
+- **A Sentinel scenario passed while proving nothing.** VERIFY-01 committed a row that a
+  test fixture had inserted by hand rather than one the pipeline produced, because it
+  reused whatever document it found. It now always runs the pipeline.
+- **Next 16 writes `CLAUDE.md` and `AGENTS.md` into `web/` on first run.** A nested
+  CLAUDE.md there would shadow the project's own instructions. Disabled with
+  `agentRules: false` and gitignored.
+- **Server Actions failed the origin check** in an embedded browser (`Origin: null`) and
+  would fail behind a proxy or when reached by IP. Writes are plain form posts now
+  (ADR 0018), which also makes every page work with JavaScript off.
+- **A redirect built from `request.url` silently lost the session**, rewriting
+  `127.0.0.1` to `localhost` so the cookie was not sent back. Redirects are relative.
+- **The container images were broken for four slices** at one point, because the
+  Dockerfile never learned about new packages. `verify-compose` is the only thing that
+  catches it; run it at both gates, not just the second.
+- **`verify-compose` was verifying the wrong things, three ways.** It probed the api on
+  port 8000 while compose publishes 8001 — so for several sessions it was checking
+  whatever answered there, which on this machine is the *other checkout*. It never
+  confirmed the containers were running, so when a port clash stopped api and web from
+  starting it still reported "web page green" against the native dev server on the same
+  port. Both are fixed and the container check now runs first. A harness that can pass
+  against something else entirely is worse than no harness.
+- **The database identity guard rejected a correct database.** Its parser required the
+  annotated `revision: str = "..."` spelling, and migration 0008 used the plain form
+  Alembic also emits — so the guard did not know the revision existed and refused every
+  test run. A tripwire that fires on correct behaviour gets disabled; there is now a test
+  asserting the parser finds a revision in every migration file.
+- **Generating Python with a shell heredoc corrupts escapes.** Hit twice more this
+  session: `\b` became a backspace inside a regex, and `\\(` became `\(`. Use the Edit
+  tool for anything containing escapes.
 
 ## Slices completed
 
@@ -214,10 +222,17 @@ refuses to run against a database this checkout did not migrate.
 - [x] **5a Golden thread, headless** — OCR, extraction, sign, anchor, idempotent
 - [x] **7 Destructive redaction + role-switch** — remove/rasterise/rebuild, VIC-01 closed
 - [x] **11a OCR accuracy table** — CER by language, latency, caveats on the page
-- [ ] 4b Upload hardening (Tier C)
-- [ ] 6b Corpus scale-up (Tier C)
-- [ ] **5b Verification UI (Tier A, 2.5h)** — deferred by PLAN's hour-20 gate, not cut
-- [ ] 5b+ Span highlighting (Tier C — the API path exists)
-- [ ] 8 Sentinel dashboard page (Tier C — the 11 scenarios exist and run in the CLI)
+- [x] **5b Verification UI** — draft fields, scan, the human commit
+- [x] **5b+ Span highlighting** — char offsets to rectangles via `ocr_word`
+- [x] **8 Sentinel dashboard** — 15 scenarios, run live on every load
+- [x] **4b Upload hardening** — sniffing, size cap, sanitisation, worker-side thread
+- [x] **6b Corpus scale-up** — 48 documents, 10 degraded, clean-vs-degraded CER
 
-Cut: 10 (completeness engine), 11's extraction metric, 12 (selective disclosure).
+Cut, and still cut: 10 (completeness engine), 11's extraction metric, 12 (selective
+disclosure).
+
+## Next concrete action
+
+**Rehearse, then stop building.** `python tasks.py demo && python tasks.py up`, then walk
+the five-step demo above twice without notes. The build is complete; the remaining risk
+is entirely in presenting it.

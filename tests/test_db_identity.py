@@ -55,3 +55,30 @@ def test_the_message_names_what_to_check(tmp_path):
     known = known_revisions(ROOT / "alembic" / "versions")
     message = check_revision("someone_elses_head", known).message
     assert "POSTGRES_PORT" in message and "container_name" in message
+
+
+def test_the_parser_finds_a_revision_in_every_migration_file():
+    """The guard must see every migration, or it condemns a correct database.
+
+    `known_revisions` used to require the annotated `revision: str = "..."` spelling.
+    Migration 0008 was written with the plain `revision = "..."` that Alembic also
+    emits, so the guard did not know about it and reported a correctly-migrated
+    database as belonging to another project — refusing to run the suite at all.
+
+    A tripwire that fires on correct behaviour is worse than no tripwire, because the
+    response is to disable it. Asserting file count against revision count means a
+    migration written in either style cannot go unseen.
+    """
+    from pathlib import Path
+
+    from infra.db_identity import known_revisions
+
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    files = {p for p in versions.glob("*.py") if p.name != "__init__.py"}
+    found = known_revisions(versions)
+
+    assert files, "no migration files found at all"
+    assert len(found) == len(files), (
+        f"{len(files)} migration files but {len(found)} revisions parsed: "
+        f"{sorted(p.name for p in files)} vs {sorted(found)}"
+    )

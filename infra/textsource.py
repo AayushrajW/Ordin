@@ -29,9 +29,18 @@ from pathlib import Path
 import fitz
 
 RASTER_DPI = 200
+
+# **Confidence is 0..1 everywhere in this system.** Tesseract reports 0..100 and the
+# figure was stored raw, so `ocr_text.mean_confidence` held 92.5 while
+# `extracted_field.confidence` held 1.0 — two columns with the same name, the same
+# type and different scales. The screen rendered "mean confidence 9252.6%", which is
+# how it was noticed; the real cost is that any future comparison or threshold across
+# the two would have been wrong and would not have looked wrong.
+CONFIDENCE_SCALE = 100.0
+
 # Below this mean confidence the page goes to a human rather than being trusted.
 # Slice 5a's spec: "Low OCR confidence or handwriting -> requires_manual_entry".
-MANUAL_ENTRY_CONFIDENCE_THRESHOLD = 70.0
+MANUAL_ENTRY_CONFIDENCE_THRESHOLD = 0.70
 
 
 @dataclass(frozen=True)
@@ -162,6 +171,9 @@ class TesseractOcr(TextSource):
                         continue
                     if confidence < 0:
                         continue
+                    # Normalised at the boundary, so nothing downstream has to know
+                    # that this engine counts to a hundred.
+                    confidence /= CONFIDENCE_SCALE
 
                     here = (block, paragraph, line_no)
                     if previous_line is not None and here != previous_line:

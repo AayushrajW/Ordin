@@ -293,3 +293,52 @@ async def test_nothing_in_the_pipeline_writes_verified(ctx):
         )
     ).scalars().all()
     assert set(statuses) <= {"draft"}, f"a pipeline stage wrote {statuses}"
+
+
+async def test_the_version_records_what_arrived_as_well_as_what_is_held(ctx):
+    """Migration 0008, and the reason identity moved off the stored digest.
+
+    Sanitisation sits in front of version creation, so the bytes stored are not the
+    bytes received. Keying version identity on the stored digest made an upload's
+    identity depend on PyMuPDF serialising identically every time for the life of the
+    process — which it very nearly does, and the gap showed up as these tests failing
+    intermittently in full runs and passing in isolation, in a different test each time.
+
+    `source_sha256` is what arrived; `sha256` is what is held, signed and anchored. When
+    they differ, something was removed, and before this column that difference was
+    invisible.
+    """
+    import fitz
+
+    from infra.blobstore import sha256_bytes
+
+    conn, pipeline, case_id, actor_id = ctx
+
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 96), "SPECIMEN - NOT A REAL RECORD", fontsize=12)
+    plain = doc.tobytes()
+    doc.close()
+    doc = fitz.open(stream=plain, filetype="pdf")
+    action = doc.get_new_xref()
+    doc.update_object(action, r"<< /Type /Action /S /JavaScript /JS (app.alert\(1\);) >>")
+    doc.xref_set_key(doc.pdf_catalog(), "OpenAction", f"{action} 0 R")
+    hostile = doc.tobytes()
+    doc.close()
+
+    result = await pipeline.run(
+        conn, case_id=case_id, actor_id=actor_id, filename="hostile.pdf", data=hostile,
+    )
+    row = (
+        await conn.execute(
+            sa.text(
+                "SELECT sha256, source_sha256 FROM document_version WHERE id = :v"
+            ),
+            {"v": result.version_id},
+        )
+    ).mappings().one()
+
+    assert row["source_sha256"] == sha256_bytes(hostile), "the upload's digest was not kept"
+    assert row["sha256"] != row["source_sha256"], (
+        "stored and received are identical, so sanitisation removed nothing"
+    )
+    assert row["sha256"] == result.content_sha256

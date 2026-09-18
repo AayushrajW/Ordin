@@ -17,8 +17,12 @@ language packs. Node 20+ if you want the web tier.
 ```bash
 python tasks.py setup     # venv, dependencies, .env, fixtures
 python tasks.py doctor    # says what is still missing, and what to do about it
+python tasks.py demo      # fresh database, seed, and documents through the real pipeline
 python tasks.py up        # postgres in docker; api, worker and web natively
 ```
+
+Then open **http://127.0.0.1:3001** and pick a specimen identity. `demo` is what turns
+a correct-but-empty case list into something worth looking at.
 
 `doctor` works on a machine where nothing is set up yet — that is the situation it
 exists for. If something is wrong it tells you which thing.
@@ -26,7 +30,7 @@ exists for. If something is wrong it tells you which thing.
 ### The three things worth seeing
 
 ```bash
-python tasks.py sentinel         # 11 security scenarios, each able to go red
+python tasks.py sentinel         # 15 security scenarios, each able to go red
 python tasks.py evaluate         # OCR accuracy and latency, with its caveats
 python tasks.py verify-compose   # all four containers, inside 8 GB
 ```
@@ -48,9 +52,12 @@ something you watch pass rather than something we assert.
 | Integrity | content-addressed storage, `LocalAnchorStore`, five-state `verify()` |
 | Golden thread | upload → OCR → extract → sign → anchor, idempotent |
 | Redaction | destructive, rasterised, with the derived text closed off too |
-| Fixtures | 10 synthetic documents, English and Hindi, with ground truth |
+| Verification UI | draft fields beside the scan; the human commit that writes `verified` |
+| Sentinel | 15 scenarios, rendered on a page and re-run live on every load |
+| Upload hardening | content sniffing, size cap, structural sanitisation before storage |
+| Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-272 tests. `python tasks.py test`.
+323 tests. `python tasks.py test`.
 
 ---
 
@@ -72,8 +79,12 @@ it makes them:
   soft key on the shared host, no certificate, no binding to a natural person.
 - **Redaction removes what it was told to remove.** Region selection is patterns over
   OCR text plus a human; there is no entity recognition and no LLM, so a handwritten
-  name or a photographed ID card is never located. OCR character error rate on Hindi
-  is **10%** against 0.34% on English, which bounds this further.
+  name or a photographed ID card is never located. OCR bounds it further: character
+  error rate is **2.0% on clean renders and 27.2% on degraded scans**, and **20.7% on
+  Hindi**. Redaction is least reliable exactly where the documents are worst.
+- **Upload hardening strips active content; it is not malware scanning.** A PDF's
+  JavaScript, launch actions and embedded files are removed and the result is
+  re-checked before storage. Nothing inspects what the document *says*.
 
 Nothing here claims a certification or a compliance status. Standards are "aligned
 to", never "certified", and no statistic appears that was not measured by a command

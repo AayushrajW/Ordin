@@ -36,6 +36,7 @@ from domain.extraction import extract_fields
 from infra.anchor import LocalAnchorStore
 from infra.blobstore import BlobStore, sha256_bytes
 from infra.esign import SimulatedESignProvider
+from infra.intake import sanitise
 from infra.textsource import TextSource, TextSourceUnavailable
 
 
@@ -143,17 +144,71 @@ class Pipeline:
 
     # --- the thread -----------------------------------------------------------
 
+    async def ingest(
+        self, conn, *, case_id: str, filename: str, data: bytes
+    ) -> tuple[str, str, str, str]:
+        """Validate and version, without running a single stage.
+
+        Split out from `run` so the api can accept an upload **without needing an OCR
+        engine**. `docker/python.Dockerfile` states the reason plainly: the api target
+        deliberately has no Tesseract, because an api that could run OCR invites
+        somebody to call it synchronously on a request. Honouring that means the
+        upload route ends here and the worker picks the version up.
+
+        Returns (document_id, version_id, content_sha256, source_sha256).
+        """
+        # Slice 4b: validate before version. The thread is upload -> validate ->
+        # version, and this is the validate. Sanitising here rather than at the HTTP
+        # boundary means **no caller can create a version from unsanitised bytes** -
+        # not a route added later, not a fixture loader, not a test. `sanitise` raises
+        # `UploadRejected` with an enumerated code; nothing is written when it does.
+        #
+        # What is stored, hashed, signed and anchored is the sanitised file. Anchoring
+        # the digest of the upload would anchor something the system does not hold.
+        intake = sanitise(data)
+
+        # **Identity is the digest of what arrived, not of what is stored** (ADR 0017,
+        # migration 0008). Keying on the stored digest made the identity of an upload
+        # depend on the sanitiser being byte-stable for the life of the process, and
+        # PyMuPDF very nearly is: its output occasionally differs by a few bytes as
+        # mupdf compacts object numbering. The symptom was the idempotency tests
+        # failing intermittently in full runs and passing alone, in a different test
+        # each time.
+        document_id, version_id = await self._upsert_version(
+            conn, case_id=case_id, filename=filename, data=intake.data,
+            content_sha256=intake.sha256, source_sha256=intake.original_sha256,
+        )
+        return (
+            str(document_id), str(version_id), intake.sha256, intake.original_sha256,
+        )
+
     async def run(
         self, conn, *, case_id: str, actor_id: str, filename: str, data: bytes,
         at: datetime | None = None,
     ) -> PipelineResult:
+        """Ingest and then process, in one call. The headless path and the tests."""
         at = at or datetime.now(timezone.utc)
-        content_sha256 = sha256_bytes(data)
-
-        document_id, version_id = await self._upsert_version(
-            conn, case_id=case_id, filename=filename, data=data,
-            content_sha256=content_sha256,
+        document_id, version_id, content_sha256, source_sha256 = await self.ingest(
+            conn, case_id=case_id, filename=filename, data=data
         )
+        return await self.process_version(
+            conn, case_id=case_id, document_id=document_id, version_id=version_id,
+            content_sha256=content_sha256, source_sha256=source_sha256,
+            actor_id=actor_id, at=at,
+        )
+
+    async def process_version(
+        self, conn, *, case_id: str, document_id: str, version_id: str,
+        content_sha256: str, source_sha256: str, actor_id: str,
+        at: datetime | None = None,
+    ) -> PipelineResult:
+        """Run the four stages against a version that already exists.
+
+        Deliberately does **not** re-sanitise. Sanitising is deterministic but is not
+        its own fixed point (ADR 0017), so a worker that re-ran it on stored bytes
+        could produce a second version of a document it was only supposed to process.
+        """
+        at = at or datetime.now(timezone.utc)
         result = PipelineResult(
             document_id=str(document_id), version_id=str(version_id),
             content_sha256=content_sha256,
@@ -166,7 +221,7 @@ class Pipeline:
             (JobStage.ANCHOR, self._stage_anchor),
         ):
             key = idempotency_key(
-                case_id=str(case_id), content_sha256=content_sha256, operation=stage.value
+                case_id=str(case_id), content_sha256=source_sha256, operation=stage.value
             )
             claimed, existing = await self._claim(conn, version_id=version_id, stage=stage.value,
                                                   key=key)
@@ -207,12 +262,15 @@ class Pipeline:
 
         return result
 
-    async def _upsert_version(self, conn, *, case_id, filename, data, content_sha256):
+    async def _upsert_version(
+        self, conn, *, case_id, filename, data, content_sha256, source_sha256=None
+    ):
         """Store the bytes and find-or-create the version.
 
-        Content-addressed, so a re-run finds the existing version rather than creating
-        a second one. Originals are never overwritten (reliability invariant); this
-        either matches what is there or adds a new version number.
+        Found by the **source** digest — what arrived — falling back to the stored
+        digest for rows written before migration 0008. Originals are never overwritten
+        (reliability invariant); this either matches what is there or adds a new
+        version number.
         """
         self.blobs.put(data)
 
@@ -221,9 +279,12 @@ class Pipeline:
                 sa.text(
                     "SELECT dv.id, dv.document_id FROM document_version dv "
                     "JOIN document d ON d.id = dv.document_id "
-                    "WHERE d.case_id = :c AND dv.sha256 = :h LIMIT 1"
+                    "WHERE d.case_id = :c "
+                    "  AND (dv.source_sha256 = :src "
+                    "       OR (dv.source_sha256 IS NULL AND dv.sha256 = :h)) "
+                    "LIMIT 1"
                 ),
-                {"c": case_id, "h": content_sha256},
+                {"c": case_id, "h": content_sha256, "src": source_sha256 or content_sha256},
             )
         ).mappings().one_or_none()
         if existing:
@@ -254,10 +315,12 @@ class Pipeline:
         version_id = uuid.uuid4()
         await conn.execute(
             sa.text(
-                "INSERT INTO document_version (id, document_id, version_no, sha256) "
-                "VALUES (:i,:d,:n,:h)"
+                "INSERT INTO document_version "
+                "(id, document_id, version_no, sha256, source_sha256) "
+                "VALUES (:i,:d,:n,:h,:src)"
             ),
-            {"i": version_id, "d": document_id, "n": next_no, "h": content_sha256},
+            {"i": version_id, "d": document_id, "n": next_no, "h": content_sha256,
+             "src": source_sha256 or content_sha256},
         )
         return document_id, version_id
 

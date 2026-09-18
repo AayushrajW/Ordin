@@ -29,6 +29,7 @@ if str(ROOT) not in sys.path:
 
 from api.config import Settings  # noqa: E402
 from api.logging import configure_logging  # noqa: E402
+from worker.intake_queue import process_pending  # noqa: E402
 
 log = logging.getLogger("ordin.worker")
 
@@ -62,6 +63,9 @@ async def run() -> int:
                "interval_s": HEARTBEAT_INTERVAL_SECONDS},
     )
 
+    pipeline = _build_pipeline(settings)
+    actor_id = None
+
     failures = 0
     try:
         while not _shutdown.is_set():
@@ -78,6 +82,23 @@ async def run() -> int:
                     "heartbeat failed",
                     extra={"error_type": type(exc).__name__, "consecutive": failures},
                 )
+            if pipeline is not None:
+                try:
+                    if actor_id is None:
+                        actor_id = await _system_actor(engine)
+                    if actor_id is not None:
+                        async with engine.connect() as conn:
+                            done = await process_pending(conn, pipeline, actor_id=actor_id)
+                            await conn.commit()
+                        if done:
+                            log.info("intake batch", extra={"versions": done})
+                except Exception as exc:  # noqa: BLE001
+                    # Type only, never the message. A parser error can carry a
+                    # fragment of the document (invariant 12, threat CD-01).
+                    log.warning(
+                        "intake batch failed", extra={"error_type": type(exc).__name__}
+                    )
+
             try:
                 await asyncio.wait_for(
                     _shutdown.wait(), timeout=HEARTBEAT_INTERVAL_SECONDS
@@ -88,6 +109,53 @@ async def run() -> int:
         await engine.dispose()
         log.info("worker stopped")
     return 0
+
+
+def _build_pipeline(settings):
+    """The pipeline the worker runs, or None if it cannot.
+
+    A missing OCR engine is reported once at startup and the worker keeps its
+    heartbeat, because `/health`'s worker check is about liveness and database reach.
+    What it must not do is fall back to reading the PDF's own text layer and calling
+    it OCR (ADR 0012).
+    """
+    from infra.anchor import LocalAnchorStore
+    from infra.blobstore import LocalBlobStore
+    from infra.esign import SimulatedESignProvider
+    from infra.pipeline import Pipeline
+    from infra.textsource import TesseractOcr
+
+    blob_root = Path(settings.ordin_blob_root)
+    if not blob_root.is_absolute():
+        blob_root = ROOT / blob_root
+
+    source = TesseractOcr()
+    if not source.available():
+        log.warning(
+            "no OCR engine; uploads will queue and not be processed by this worker",
+            extra={"component": COMPONENT},
+        )
+        return None
+    return Pipeline(
+        blobs=LocalBlobStore(blob_root),
+        text_source=source,
+        signer=SimulatedESignProvider(settings.ordin_session_secret.get_secret_value()),
+        anchors=LocalAnchorStore(),
+    )
+
+
+async def _system_actor(engine) -> str | None:
+    """Who the worker records as the actor for machine stages.
+
+    Resolved from the database rather than invented, so every processing job names a
+    real row. It is not an authorization subject: the worker sits outside the model.
+    """
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                sa.text("SELECT id::text FROM app_user ORDER BY display_name LIMIT 1")
+            )
+        ).scalar_one_or_none()
 
 
 def _request_shutdown(*_args) -> None:

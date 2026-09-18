@@ -497,6 +497,271 @@ async def test_spans_are_refused_outside_the_disclosure_class(api):
     assert (await client.get(f"/fields/{field['id']}/spans")).status_code == 404
 
 
+# --- redaction, reachable -----------------------------------------------------
+
+
+async def test_redacting_fields_produces_a_derivative_without_the_values(api):
+    """Slice 7 made reachable: the route, the derivative, and the text actually gone.
+
+    The assertion that matters is the last one. A derivative that merely *exists* is
+    what the database had for several sessions while the bytes behind it were a
+    placeholder — so this extracts the text from the produced file and looks for the
+    values, having first asserted the original still contains them.
+    """
+    from infra.redact import confirm_absent
+
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    fields = [
+        f
+        for f in (await client.get(f"/versions/{ids['version']}/fields")).json()
+        if f["source_span_start"] is not None
+    ]
+    assert fields, "no field carries a span, so there is nothing to locate"
+    values = [f["value"] for f in fields]
+
+    blobs = client._transport.app.state.blobs
+    original_sha = None
+    response = await client.get(f"/documents/{ids['document']}")
+    for version in response.json()["versions"]:
+        if not version["is_derivative"]:
+            original_sha = version["sha256"]
+    assert original_sha, "no original version to redact"
+    assert confirm_absent(blobs.get(original_sha), values) == values, (
+        "the original does not contain the values, so their absence later proves nothing"
+    )
+
+    made = await client.post(
+        f"/versions/{ids['version']}/redact",
+        json={"field_ids": [f["id"] for f in fields]},
+    )
+    assert made.status_code == 201, made.text
+    assert made.json()["regions"] > 0
+
+    derivative_id = made.json()["version_id"]
+    detail = (await client.get(f"/documents/{ids['document']}")).json()
+    derivative = next(v for v in detail["versions"] if v["id"] == derivative_id)
+    assert derivative["is_derivative"]
+
+    leaked = confirm_absent(blobs.get(derivative["sha256"]), values)
+    assert leaked == [], f"still extractable from the derivative: {leaked}"
+
+
+async def test_redacting_the_same_fields_twice_makes_one_derivative(api):
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    fields = [
+        f["id"]
+        for f in (await client.get(f"/versions/{ids['version']}/fields")).json()
+        if f["source_span_start"] is not None
+    ]
+    first = await client.post(f"/versions/{ids['version']}/redact", json={"field_ids": fields})
+    second = await client.post(f"/versions/{ids['version']}/redact", json={"field_ids": fields})
+    assert first.status_code == second.status_code == 201
+    assert first.json()["version_id"] == second.json()["version_id"]
+    assert second.json()["created"] is False
+
+
+async def test_redacting_nothing_locatable_is_refused_not_silently_empty(api):
+    """A copy that removed nothing must never be handed on as a redaction."""
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    entered = await client.post(
+        f"/versions/{ids['version']}/fields",
+        json={"field_key": "hand_entered", "value": "no span exists for this"},
+    )
+    assert entered.status_code == 201
+    response = await client.post(
+        f"/versions/{ids['version']}/redact", json={"field_ids": [entered.json()["id"]]}
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "nothing_located_to_remove"
+
+
+async def test_a_grantee_cannot_redact(api):
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    fields = [
+        f["id"]
+        for f in (await client.get(f"/versions/{ids['version']}/fields")).json()
+        if f["source_span_start"] is not None
+    ]
+    await client.delete("/session")
+
+    await sign_in(client, ids["grantee"])
+    response = await client.post(
+        f"/versions/{ids['version']}/redact", json={"field_ids": fields}
+    )
+    assert response.status_code == 404
+
+
+# --- slice 4b over HTTP -------------------------------------------------------
+
+
+def _hostile_pdf() -> bytes:
+    """A real PDF that opens by running JavaScript."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 96), "SPECIMEN - NOT A REAL RECORD", fontsize=12)
+    page.insert_text((72, 120), "Complainant Name: Farida Sheikh", fontsize=11)
+    data = doc.tobytes()
+    doc.close()
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    action = doc.get_new_xref()
+    doc.update_object(action, "<< /Type /Action /S /JavaScript /JS (app.alert\\(1\\);) >>")
+    doc.xref_set_key(doc.pdf_catalog(), "OpenAction", f"{action} 0 R")
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+async def test_an_uploaded_pdf_carrying_javascript_is_stored_sanitised(api, tmp_path):
+    """Slice 4b's acceptance criterion, end to end over the real route.
+
+    The assertion is against the **stored blob**, not the response: a route that
+    sanitised for the reply and stored the upload would pass any check made on what
+    came back.
+    """
+    from infra.intake import active_constructs
+
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    hostile = _hostile_pdf()
+    assert "/JavaScript" in active_constructs(hostile), "the specimen is not hostile"
+
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=hostile.pdf",
+        content=hostile,
+        headers={"content-type": "application/pdf"},
+    )
+    assert response.status_code == 202, response.text
+    stored_sha = response.json()["sha256"]
+
+    from api.main import create_app  # noqa: F401 - the app under test owns the store
+
+    blobs = client._transport.app.state.blobs
+    stored = blobs.get(stored_sha)
+    assert stored is not None, "the route reported a digest it did not store"
+    assert active_constructs(stored) == []
+    assert stored_sha != __import__("hashlib").sha256(hostile).hexdigest(), (
+        "the bytes on disk are the ones that were uploaded"
+    )
+
+
+async def test_uploading_the_same_file_twice_yields_one_version(api):
+    client, ids, engine = api
+    await sign_in(client, ids["officer"])
+    hostile = _hostile_pdf()
+    headers = {"content-type": "application/pdf"}
+    path = f"/cases/{ids['case']}/documents?filename=twice.pdf"
+
+    first = await client.post(path, content=hostile, headers=headers)
+    second = await client.post(path, content=hostile, headers=headers)
+    assert first.status_code == second.status_code == 202
+    assert first.json()["version_id"] == second.json()["version_id"], (
+        "a second upload of identical bytes created a second version"
+    )
+
+
+async def test_a_non_pdf_upload_is_refused_by_content(api):
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=looks_like.pdf",
+        content=b"GIF89a" + b"\x00" * 64,
+        headers={"content-type": "application/pdf"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "content_is_not_pdf"
+
+
+async def test_a_grantee_cannot_upload(api):
+    """Reading derivatives does not imply adding evidence to the case (ADR 0014)."""
+    client, ids, _ = api
+    await sign_in(client, ids["grantee"])
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=theirs.pdf",
+        content=_hostile_pdf(),
+        headers={"content-type": "application/pdf"},
+    )
+    assert response.status_code == 404
+
+
+async def test_the_uploaded_filename_cannot_carry_a_path(api):
+    """Whatever the uploader called the file is untrusted text on its way to a screen."""
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=" + "../../etc/pa%3Cscript%3Essswd.pdf",
+        content=_hostile_pdf(),
+        headers={"content-type": "application/pdf"},
+    )
+    assert response.status_code == 202
+    documents = (await client.get(f"/cases/{ids['case']}/documents")).json()
+    titles = [d["title"] for d in documents]
+    assert not any("/" in t or "<" in t for t in titles), titles
+
+
+async def test_an_upload_is_queued_and_the_worker_completes_the_thread(api, live_settings):
+    """The split introduced in slice 4b, asserted end to end.
+
+    The api validates and versions; it has no OCR engine and creates no `ocr_text`.
+    The worker claims the version and runs the four stages. Asserting both halves
+    matters more than either alone: an api that quietly processed would pass the first
+    assertion, and a worker that never claimed would pass the second.
+    """
+    from infra.anchor import LocalAnchorStore
+    from infra.pipeline import Pipeline
+    from worker.intake_queue import claim_unprocessed, process_pending
+
+    client, ids, engine = api
+    await sign_in(client, ids["officer"])
+    # A document the fixture has NOT already ingested. Uploading `complaint-0001`
+    # would find the existing version by its source digest and legitimately report
+    # OCR text that the api never produced — the test would then fail for the one
+    # reason that is not a bug.
+    fresh = ROOT / "fixtures" / "corpus" / "witness-0003.pdf"
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=queued.pdf",
+        content=fresh.read_bytes(),
+        headers={"content-type": "application/pdf"},
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    version_id = response.json()["version_id"]
+
+    async with engine.connect() as conn:
+        assert (
+            await conn.execute(
+                sa.text("SELECT count(*) FROM ocr_text WHERE version_id = :v"),
+                {"v": version_id},
+            )
+        ).scalar_one() == 0, "the api ran OCR, which is the thing the split prevents"
+
+        pending = [str(r["version_id"]) for r in await claim_unprocessed(conn)]
+    assert version_id in pending, "the worker's queue does not see the uploaded version"
+
+    owner = create_async_engine(live_settings.owner_dsn)
+    worker_pipeline = Pipeline(
+        blobs=client._transport.app.state.blobs,
+        text_source=EmbeddedTextLayer(),
+        signer=SimulatedESignProvider("worker-secret"),
+        anchors=LocalAnchorStore(),
+    )
+    async with owner.connect() as conn:
+        done = await process_pending(conn, worker_pipeline, actor_id=ids["officer"])
+        await conn.commit()
+    await owner.dispose()
+    assert done >= 1
+
+    fields = (await client.get(f"/versions/{version_id}/fields")).json()
+    assert fields, "the worker processed nothing into the version"
+    assert all(f["status"] == "draft" for f in fields)
+
+
 # --- the session cookie is still the only identity ---------------------------
 
 

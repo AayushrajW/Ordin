@@ -7,6 +7,7 @@ install step.
 
     python tasks.py setup           first run on a clean clone: venv, deps, .env, fixtures
     python tasks.py doctor          check the environment before blaming the code
+    python tasks.py demo           fresh + seed + ingest documents: a case file to show
     python tasks.py up             dev path: postgres in docker, api+worker+web native
     python tasks.py down           stop containers, leave the data
     python tasks.py fresh          destroy the volume and rebuild from nothing
@@ -337,8 +338,14 @@ def cmd_sentinel() -> int:
 
 
 def cmd_fixtures() -> int:
-    """Regenerate the synthetic fixture corpus and its ground-truth sidecars."""
-    run([PY, "-m", "fixtures.generate"])
+    """Regenerate the synthetic corpus and its ground-truth sidecars.
+
+    Slice 6b: 48 documents, of which the first ten are the hand-written ones the
+    tests and the demo address by slug, and a quarter of the remainder are degraded
+    scans. Seeded, so two machines produce byte-identical corpora and their accuracy
+    figures can be compared.
+    """
+    run([PY, "-m", "fixtures.scale"])
     return 0
 
 
@@ -346,6 +353,18 @@ def cmd_seed() -> int:
     """Load the structural demo seed: 3 cases across 2 organizations."""
     run([PY, "seed.py"])
     return 0
+
+
+def cmd_demo() -> int:
+    """Fresh database, seed, then ingest documents through the real pipeline.
+
+    One command between a clean checkout and a case file worth showing somebody.
+    """
+    if cmd_fresh() != 0:
+        return 1
+    if cmd_seed() != 0:
+        return 1
+    return run([PY, "demo.py"], check=False).returncode
 
 
 def cmd_worker() -> int:
@@ -368,16 +387,23 @@ def cmd_up() -> int:
         print("  starting worker")
         procs.append(subprocess.Popen([PY, "-m", "worker.main"], cwd=ROOT))
 
+        # The same port the compose path publishes. `package.json` says 3000 because
+        # that is the port inside the container, and the native loop must not take it:
+        # 3000 belongs to the second checkout at D:\Legal Assistant, and two dev
+        # servers on one port is the class of collision that already cost this project
+        # a shared postgres container.
+        web_port = os.environ.get("ORDIN_WEB_PORT", "3001")
         web_dir = ROOT / "web"
         if (web_dir / "node_modules").exists():
-            print("  starting web (next dev)")
+            print(f"  starting web (next dev, port {web_port})")
             procs.append(subprocess.Popen(
-                ["npm", "run", "dev"], cwd=web_dir, env=web_env, shell=(os.name == "nt")))
+                ["npm", "run", "dev", "--", "--port", web_port],
+                cwd=web_dir, env=web_env, shell=(os.name == "nt")))
         else:
             print("  skipping web - run `npm install` in web/ first")
 
         print(f"\n  api    http://{cfg.ordin_api_host}:{cfg.ordin_api_port}/health")
-        print(f"  web    http://127.0.0.1:3000")
+        print(f"  web    http://127.0.0.1:{web_port}")
         print("  ctrl-c to stop everything\n")
         run([PY, "-m", "uvicorn", "api.main:app",
              "--host", cfg.ordin_api_host, "--port", str(cfg.ordin_api_port), "--reload"],
@@ -401,6 +427,10 @@ def _http_json(url: str, timeout: float = 5.0):
         return response.status, _json.loads(response.read().decode())
 
 
+class _ComposeNotUp(RuntimeError):
+    """The stack did not start. Every later check would be measuring something else."""
+
+
 def cmd_verify_compose() -> int:
     """The demo path. Brings all four containers up, checks them, tears down.
 
@@ -417,12 +447,49 @@ def cmd_verify_compose() -> int:
     run(["docker", "compose", "up", "-d", "--build"], check=False)
 
     try:
-        print("  waiting for the api to become healthy (up to 180s)")
+        # **Check the containers are actually running before believing any endpoint.**
+        # Without this the harness lies: the native dev loop publishes the api and the
+        # web tier on the same ports, so when `up` failed to bind them this reported
+        # "web page green" against a process compose had not started, while the web
+        # container sat in `Created`. A verification that can pass against something
+        # else entirely is worse than no verification.
+        print("  confirming all four containers are running")
+        expected = {"postgres", "api", "worker", "web"}
+        deadline = time.time() + 60
+        running: set[str] = set()
+        while time.time() < deadline:
+            listing = subprocess.run(
+                ["docker", "compose", "ps", "--format", "{{.Service}} {{.State}}"],
+                capture_output=True, text=True,
+            )
+            running = {
+                line.split()[0]
+                for line in (listing.stdout or "").splitlines()
+                if line.strip().endswith("running")
+            }
+            if expected <= running:
+                print(f"    running: {', '.join(sorted(running & expected))}")
+                break
+            time.sleep(2)
+        missing = expected - running
+        if missing:
+            failures.append(
+                f"container(s) not running: {', '.join(sorted(missing))} "
+                f"- if a port is already bound, stop `tasks.py up` first"
+            )
+            # Everything below would be measuring the wrong thing.
+            raise _ComposeNotUp(missing)
+
+        # The published port, not the container's internal one. This probed 8000 for
+        # three sessions while compose published 8001, so the check either found
+        # nothing or found a different process - never the container it was verifying.
+        api_url = f"http://127.0.0.1:{os.environ.get('ORDIN_API_PORT', '8001')}"
+        print(f"  waiting for the api at {api_url} to become healthy (up to 180s)")
         deadline = time.time() + 180
         api_ok = False
         while time.time() < deadline:
             try:
-                status, body = _http_json("http://127.0.0.1:8000/health")
+                status, body = _http_json(f"{api_url}/health")
                 if status == 200 and body.get("status") == "healthy":
                     api_ok = True
                     print(f"    api healthy: {[c['name'] for c in body['checks']]}")
@@ -440,12 +507,15 @@ def cmd_verify_compose() -> int:
         # having one.
         cfg = settings()
         web_url = f"http://127.0.0.1:{os.environ.get('ORDIN_WEB_PORT', '3001')}"
-        print(f"  checking the web page at {web_url} (up to 90s)")
+        # The health page, not the front page: slice 5b made `/` the case list, and
+        # what this check is for is "the web tier rendered something that required
+        # the api to answer", which the health page states unambiguously.
+        print(f"  checking the web health page at {web_url}/health (up to 90s)")
         deadline = time.time() + 90
         web_ok, last = False, "never responded"
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(web_url, timeout=10) as r:
+                with urllib.request.urlopen(f"{web_url}/health", timeout=10) as r:
                     html = r.read().decode(errors="replace")
                 if r.status != 200:
                     last = f"web returned {r.status}"
@@ -504,6 +574,8 @@ def cmd_verify_compose() -> int:
         print(f"    {'TOTAL':16} {total_mb:.0f}MiB")
         if total_mb > 1500:
             failures.append(f"containers used {total_mb:.0f} MiB, over the 1500 MiB ceiling")
+    except _ComposeNotUp:
+        pass
     finally:
         print("  tearing down")
         run(["docker", "compose", "down"], check=False)
@@ -562,6 +634,7 @@ COMMANDS = {
     "fixtures": cmd_fixtures,
     "sentinel": cmd_sentinel,
     "evaluate": cmd_evaluate,
+    "demo": cmd_demo,
     "setup": cmd_setup,
     "verify-compose": cmd_verify_compose,
 }

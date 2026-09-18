@@ -21,7 +21,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-REVISION_PATTERN = re.compile(r'^revision:\s*str\s*=\s*["\']([^"\']+)["\']', re.M)
+# Both spellings Alembic templates produce. Requiring the annotated form made a
+# migration written the other way invisible to this guard, which then reported a
+# correctly-migrated database as another project's and refused every test run — a
+# tripwire firing on correct behaviour, which is how tripwires get disabled.
+REVISION_PATTERN = re.compile(
+    r'^revision(?:\s*:\s*str)?\s*=\s*["\']([^"\']+)["\']', re.M
+)
 
 
 def known_revisions(versions_dir: Path | str) -> set[str]:
