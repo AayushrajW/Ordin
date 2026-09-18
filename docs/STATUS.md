@@ -1,254 +1,181 @@
 # Ordin — status
 
-> Rewritten at the end of every session via `/wrap`. Written for a reader with
-> no memory of any prior conversation.
+> Rewritten at the end of every session via `/wrap`. Written for a reader with no
+> memory of any prior conversation.
+
+## Start here
+
+```bash
+python tasks.py setup     # venv, dependencies, .env, fixtures — safe to re-run
+python tasks.py doctor    # says what is missing and what to type; works on a bare clone
+python tasks.py test      # 275 tests
+```
+
+`README.md` is the entry point. This file is the state of the build.
 
 ## Current slice
-**None — slice 11a is complete.** Tier A, Tier B and the highest-value Tier C item
-are done.
 
-## Acceptance criterion for current slice
-Remaining Tier C, in `docs/PLAN.md` order: **4b upload hardening (~2.5h)**, then
-**6b corpus scale-up (~1.5h)**. Neither is started and neither blocks anything.
+**None. Tier A, Tier B and slice 11a are complete.** The build is ahead of the
+rehearsal, which is the actual risk now.
 
-Before either, the three demo commands are the thing worth rehearsing, because they
-are what a judge actually sees:
+## Acceptance criterion for the next thing
 
-    python tasks.py sentinel    11 security scenarios, each able to go red
-    python tasks.py evaluate    OCR accuracy and latency, with its caveats
-    python tasks.py verify-compose   four containers inside 8 GB
+There are two remaining PLAN items, both Tier C, neither blocking anything:
+
+- **4b — upload hardening** (~2.5h). Content sniffing, size cap, qpdf sanitisation.
+  Acceptance: a PDF carrying JavaScript comes out sanitised. Upload is currently the
+  one unhardened entry point, and it is a visible demo beat.
+- **6b — corpus scale-up** (~1.5h). More documents plus a degradation pass, which is
+  what would make the OCR accuracy figure comparable to a real intake.
+
+**Recommended before either: rehearse twice more.** Two clean-clone rehearsals this
+session each found real defects that no test caught. BOOTSTRAP is explicit that every
+failure you will have shows up on the second clean run.
+
+## Test suite state
+
+**275 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+`tests/test_ordin_guard.py` (7 tests, standalone).
+
+`pytest -q` **hides the pass count** — `pyproject.toml` already sets `-q` in addopts, so
+a second one makes it `-qq` and suppresses the summary. A full run then looks like bare
+dots with no total, which is how a failure gets scrolled past. Use `tasks.py test`.
+
+## Landed this session
+
+- **Slice 3** (3a `887f762`, 3b `5fdb06d`) — policy as versioned data, one predicate
+  registry proven to agree across Python and SQL, the predicate inside six query
+  surfaces, `SimulatedSubjectProvider`, `policy_decision` persistence, HTTP routes,
+  and the Sentinel scenario registry.
+- **Slice 4a** (`314406e`) — `BlobStore`, `LocalAnchorStore`, `disposition`, five-state
+  `verify()`. CLAUDE.md invariant 5 amended per ADR 0010.
+- **Slice 6a** (`29b8bf4`) — 10 fixture documents with ground-truth sidecars.
+- **Slice 5a** (`553b40d`) — the golden thread, headless and idempotent.
+- **Slice 7** (`aa3a9b1`) — destructive redaction, and the disclosure rule that closes
+  threat VIC-01.
+- **Slice 11a** (`929c30d`) — OCR accuracy table with its caveats printed.
+- **Container images repaired** (`97eae52`) — broken since slice 3a.
+- **Clean-clone setup** (`c919afc`) — `tasks.py setup`, README, `doctor` that works on
+  a bare clone.
+- ADRs 0008–0013. Module briefs 03, 04a, 05a, 07.
+
+## Half-done, and exactly where
+
+**Nothing is half-done.** Working tree clean, 275 tests green, no partially written
+file and no partially implemented code path. 4b and 6b have not been started.
+
+## Next concrete action
+
+`python tasks.py fresh && python tasks.py seed && python tasks.py sentinel`, on this
+machine, twice. Then `/slice 4b` if time remains.
 
 ## Measured, 2026-09-18
-OCR character error rate over the 10-document fixture corpus, real Tesseract over
-rasterised pages:
+
+OCR character error rate, real Tesseract over rasterised pages, 10-document fixture
+corpus:
 
 | language | documents | chars | errors | CER |
 |---|---|---|---|---|
 | eng | 8 | 3231 | 11 | **0.34%** |
 | hin | 2 | 685 | 69 | **10.07%** |
 
-Latency p50 1.16s, p95 5.63s.
+Latency p50 1.16s, p95 5.63s. Four containers: 230 MiB total.
 
-**The Hindi figure is the honest finding and should be said out loud rather than
-buried.** Devanagari OCR is roughly thirty times worse than Latin here, on clean
-synthetic renders. Two consequences: any claim about bilingual support has to carry
-that number, and slice 7's redaction targeting - which relies on locating a name in
-OCR text - is correspondingly less reliable on Hindi documents. That compounds with
-accepted risk AR-6 (redaction recall is bounded by OCR recall) rather than being a
-separate problem.
+**The Hindi figure is the honest finding and should be said out loud.** Devanagari is
+roughly thirty times worse than Latin here, on clean synthetic renders. Two
+consequences: any bilingual claim must carry that number, and slice 7's redaction
+targeting — which relies on locating a name in OCR text — is correspondingly less
+reliable on Hindi documents. That compounds accepted risk AR-6 rather than sitting
+beside it.
 
-## Test suite state
-**16 passing, 0 skipped, 0 failing.** Plus `tests/test_ordin_guard.py` (4 tests) which
-runs standalone.
+## Environment — verified, do not re-derive
 
-```
-python tasks.py test        # starts postgres, waits for health, runs pytest
-python tasks.py doctor      # environment check before blaming the code
-```
-
-**There is no Makefile and `make` is not installed** — `tasks.py` is the runner, by
-decision. See `docs/adr/0007`. `BOOTSTRAP.md` still says `make fresh && make up`;
-that phrasing is superseded.
-
-## Landed this session
-- **Slice 11a** — `python tasks.py evaluate`: OCR character error rate by language
-  and stage latency, measured against the fixtures' pre-render ground truth, with the
-  caveats printed under the table rather than left to the reader.
-- **Container images repaired** — broken since slice 3a; caught by the overdue
-  `verify-compose` gate.
-- **Slice 7** — destructive redaction (remove, rasterise, rebuild the container), the
-  derivative as a first-class version, a manifest that stores salted hashes rather
-  than the removed text, and the disclosure rule that closes threat VIC-01. Four new
-  Sentinel scenarios; 11/11 from a clean database.
-- **Slice 5a** — the golden thread headless: OCR (real Tesseract over a rasterised
-  page), deterministic extraction with spans, `SimulatedESignProvider`, anchoring, all
-  as `ProcessingJob`s keyed per ADR 0004. Running it twice yields exactly one version,
-  one OCR run, one field set, one anchor — asserted by row counts, not control flow.
-- **Slice 4a** — `BlobStore` (content-addressed, immutable), `LocalAnchorStore`
-  (hash-chained, honestly named), `disposition`, and `verify()` returning five states.
-  30 new tests. CLAUDE.md invariant 5 amended per ADR 0010.
-- **Slice 3b** — `policy_decision` persistence (invariant 3 end to end),
-  `SimulatedSubjectProvider`, HTTP routes over `authorized_cases()`, and the Sentinel
-  scenario registry with slice 3's seven scenarios. `python tasks.py sentinel` prints
-  them; 7/7 passing.
-- **Slice 3a** - policy as versioned YAML, a pure evaluator, one predicate registry
-  with Python and SQL halves that are *proven* to agree, and the filter pushed inside
-  the query on six surfaces. 47 new tests.
-- **Stack isolation + foreign-database guard** after the two checkouts were found to
-  be sharing one postgres container.
-- **Slice 6a** — fixture generator producing 10 synthetic documents (8 English,
-  2 Hindi) with ground-truth sidecars: exact pre-render text plus a bounding box for
-  every identifying field. 12 new tests, including one asserting each bbox actually
-  contains the value it claims. ADR 0009 records PyMuPDF's AGPL licence and the
-  vendored OFL font.
-- **Slice 2** — 12 tables (`0003_domain_model`), pure `domain/` layer with the case
-  state machine and audit chain, seed of 3 cases across 2 organizations, 39 new tests.
-  The audit REVOKE was **mutation-tested**: granting UPDATE/DELETE back fails three
-  tests, revoking restores them.
-- **ADR 0008** (domain model scope), `docs/modules/02-domain-model.md`.
-- Folder renamed to `Ordin Build`; compose project pinned to `ordin` so it no longer
-  tracks the directory name.
-
-### Earlier this session
-- **Slice 1b** (`72bca85`): worker with heartbeat loop, Next.js health page, two
-  Dockerfiles, four-service compose with `mem_limit`s, `tasks.py verify-compose`.
-  `/health` extended from one check to three.
-- **Compose path verified for the first time** — passed on the first run.
-- ADR 0006 amended with the measured memory figure, which falsified its own premise.
-- `docs/modules/01-skeleton.md` completed; slice 1 closed.
-
-## Half-done, and exactly where
-**Nothing is half-done.** Working tree clean, 120 tests green.
-
-Slice 11a is complete. Nothing is partially built. 4b and 6b are the only PLAN items
-left and neither is started.
-
-## Next concrete action
-Run `/slice 1b`. First step inside it: add the `api`, `worker` and `web` services to
-`docker-compose.yml` with `mem_limit`s, since the memory ceiling is the thing most
-likely to make 1b fail and it should be discovered first, not last.
-
-**Before starting, close applications.** `python tasks.py doctor` reported 457 MB
-available at the end of this session, under its 800 MB warning threshold. Slice 1a
-needs ~400 MB and fits; 1b adds a Next.js dev server at ~800 MB and will not.
+- Docker Desktop 29.8.0. Installs **per-user** to `%LOCALAPPDATA%\Programs\DockerDesktop`,
+  not `C:\Program Files\Docker`.
+- WSL2 capped at 1.86 GB by `~/.wslconfig`.
+- **This stack is namespaced end to end**: compose project `ordin-build`, containers
+  `ordin-build-*`, volume `ordin_build_pgdata`, postgres `127.0.0.1:5434`, api 8001,
+  web 3001. Every port differs from 5432 (a native PostgreSQL 17 service), and from
+  5433/8000/3000 which belong to a second checkout at `D:\Legal Assistant`.
+- Python **3.11.9** in `.venv`, pinned to match the api image. The machine also has
+  3.10 and 3.13; always use `.venv/Scripts/python.exe`.
+- Tesseract 5.5.0 with `eng` and `hin`.
 
 ## WARNING — a divergent duplicate of this project exists
 
-`D:\Legal Assistant` is the old path of this checkout. The folder was **copied, not
-moved** (a directory cannot be renamed while a session holds it open), and a second
-Claude Code session — almost certainly running inside Cursor — then continued building
-in it independently.
+`D:\Legal Assistant` is the old path of this checkout. It was **copied, not moved**,
+and a second Claude Code session then built in it independently — slices 3–7 work,
+uncommitted, forked from `91a46b5`.
 
-That copy forked from commit `91a46b5` (end of slice 1) and went straight at slices
-3-7: `api/cases.py`, `api/session.py`, `api/uploads.py`, `api/search.py`,
-`infra/blobstore.py`, `infra/esign.py`, `policies/`, `services/`, a subject-switcher
-UI, and `alembic/versions/0003_domain.py`. None of it is committed there.
+**This tree is the project**, by the builder's decision. The other has been left
+untouched; deleting it is the builder's call.
 
-**This tree (`D:\Ordin Build`) is the project**, by the builder's decision on
-2026-09-18. The other session is still running and has been left alone.
-
-**The two trees shared a database until 2026-09-18.** Both compose files carried
-identical `container_name` values, and container names are globally unique in Docker -
-so `docker compose up` in either tree attached to the *same* container and the same
-`ordin_pgdata` volume. The other session applied its `0003_domain` migration, which
-replaced this tree's `0003_domain_model` schema underneath a green test suite.
-
-This stack is now namespaced end to end and cannot collide again:
-
-| | this tree | the other |
-|---|---|---|
-| compose project | `ordin-build` | `legalassistant` |
-| containers | `ordin-build-*` | `ordin-*` |
-| volume | `ordin_build_pgdata` | `ordin_pgdata` |
-| postgres | `127.0.0.1:5434` | `127.0.0.1:5433` |
-| api / web | `8001` / `3001` | `8000` / `3000` |
-
-Do not un-namespace these without first checking the other checkout is gone.
-
-Two things to know:
-
-- The two `0003` migrations occupy the **same Alembic revision slot** with different
-  contents. They can never both apply. Do not copy files between the trees without
-  resolving that first.
-- `D:\Legal Assistant` has been left completely untouched — it holds real, unreviewed
-  work. Deleting it is the builder's call, not an automatic cleanup. Check whether a
-  Cursor session is still attached to it before doing anything.
-
-## Environment — verified, do not re-derive
-- Docker Desktop 29.8.0, Linux engine, Compose v5.5.1. Installs **per-user** to
-  `%LOCALAPPDATA%\Programs\DockerDesktop`, not `C:\Program Files\Docker`.
-- WSL2 installed, capped at **1.86 GB** by `~/.wslconfig`.
-- **Postgres publishes on 127.0.0.1:5433, not 5432** — a pre-existing
-  `postgresql-x64-17` Windows service holds 5432. That service also listens on
-  `0.0.0.0`, which is the pattern threat EXT-04 warns about; not ours, not changed.
-- Python **3.11.9** in `.venv`, pinned to match the api image. The machine also has
-  3.10 and 3.13; use `.venv/Scripts/python.exe`.
-- Claude Code CLI 2.1.274 installed, so Cursor can drive this repo.
-- `.env` is gitignored and must exist — copy `.env.example`.
+The two trees shared a postgres container until they were namespaced, because both
+compose files declared identical `container_name` values and those are **globally
+unique in Docker**. The other tree migrated over this one's schema. `tasks.py test` now
+refuses to run against a database this checkout did not migrate.
 
 ## Open questions
-Decided already, do not re-litigate: idempotency key (`adr/0004`), grant granularity
-(`adr/0005`), hybrid dev loop (`adr/0006`), task runner and Python pin (`adr/0007`).
 
-Still open:
-
-1. **Case state names are placeholders.** `registered / under_investigation / filed /
-   in_trial / closed` are generic procedural stages, not confirmed Indian statutory
-   ones (ADR 0008). They must be checked against a source before appearing in UI copy,
-   a fixture or the deck. Transitions are data, so the fix is one table.
-2. **Time authority.** Application clock or database clock. Pick one — the database
+1. **Time authority.** Application clock or database clock. Pick one — the database
    boundary is cheapest and survives container clock skew — and write the ADR. A hash
    chain proves order, never time (threat EVD-05).
-3. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
-   version, so it may be OCR'd, extracted, indexed and anchored, producing a second
-   field set derived from redacted content (seam 11).
-4. **Invariant 7 vs manual entry.** Manual entry produces a field with no `source_span`
-   by construction, which is exactly what invariant 7 says must be rejected at the
-   schema boundary. Resolve before slice 5a.
-5. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation pending. Until
-   supplied it appears in no document, deck or fixture.
-6. **Statutory citations.** Slice 10 is cut, so nothing here cites a section number.
-   If one enters the UI, fixtures or deck it needs a source.
-7. Team ID for the SIH submission still unknown.
+2. **Is a redacted derivative itself processed** by the pipeline? It is a first-class
+   version, so it could be OCR'd, extracted, indexed and anchored, producing a second
+   field set derived from redacted content. Currently it is not, by omission rather
+   than by decision.
+3. **Case state names are placeholders.** `registered / under_investigation / filed /
+   in_trial / closed` are generic procedural stages, not confirmed Indian statutory
+   ones (ADR 0008). Check against a source before they appear in UI copy or the deck.
+   Transitions are data, so the fix is one table.
+4. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation still pending. It
+   appears in no document, deck or fixture until supplied.
+5. **Statutory citations.** Nothing in this build cites a section number, and no
+   extractor pattern matches one. If one enters anywhere it needs a source.
+6. Team ID for the SIH submission still unknown.
 
 ## Surprising, and worth not rediscovering
-- **`ordin_owner` is a superuser**, because that is how the Postgres image creates
-  `POSTGRES_USER`. ADR 0001's actual requirement (owner != app) holds and `ordin_app`
-  has no attributes at all, but "the owner is a superuser" is a real residual to
-  narrow before this is anything but a demo.
-- **`.gitignore` had a bug**: the `.env.*` rule was swallowing `.env.example`, the one
-  file in that family that must be committed. Fixed with a negation.
-- **The guard hook was silently dead** for an entire session — `settings.json` invoked
-  `python3`, which on this machine is the Store alias stub and exits 49, not 2. Fixed,
-  and `tests/test_ordin_guard.py` reads the command out of settings.json and runs
-  *that*, so a dead interpreter fails loudly.
-- **The guard hook channels the 3am shortcut.** It blocks a hand-rolled role comparison
-  in Python, so the fastest remaining fix is the same condition written directly into a
-  SQL WHERE clause, which its regexes cannot see. Slice 3's tests are the real control.
-- **One observed flake, unexplained.**
-  `test_pipeline_idempotency.py::test_running_three_times_is_still_one_of_everything`
-  failed once and has passed on every run since (five consecutive, plus in isolation).
-  The failing run happened immediately after `verify-compose` had done a
-  `docker compose down`, so the leading hypothesis is a transient database state
-  during container restart rather than a defect in the test or the pipeline - but
-  that is a hypothesis, not a diagnosis. If it recurs, capture the assertion output
-  before rerunning: the row counts in the failure message say whether it was a
-  duplicate or a missing row, and those point at completely different causes.
 
-- **`pytest -q` hides the pass count.** `pyproject.toml` already sets `-q` in addopts,
-  so adding another makes it `-qq` and suppresses the summary line entirely - a run
-  can look like bare dots with no total. Use `python tasks.py test`, or plain
-  `pytest`, when you want the number.
-
-- **Slices 1-12 as written price at 59-70 hours** against ~34 available (three
-  independent estimates). The plan commits to eight trimmed slices.
-- **The four-container path uses 203 MiB at idle**, not the ~1.15 GB feared. The
-  earlier figure summed `mem_limit` ceilings, not usage. This removes the capacity
-  argument for the hybrid dev loop (ADR 0006 amended); the faster-reload argument
-  stands. Re-measure at slice 5a, when Tesseract gives the worker real work.
-- **Next.js telemetry cannot be disabled from `next.config.mjs`.** A `telemetry` key
-  there is silently ignored while Next keeps posting - a fix that looks applied and is
-  not. Only `NEXT_TELEMETRY_DISABLED=1` works; `verify-compose` asserts it inside the
-  running container because it is exactly the kind of setting that regresses quietly.
-- **`pkill -f` does not kill Windows native processes.** Two stale uvicorn processes
-  from an earlier session kept serving an old one-check `/health` response. Use
-  PowerShell `Stop-Process`.
+- **The container images were broken for four slices.** `docker/python.Dockerfile` was
+  written at slice 1b and never learned about `domain/`, `infra/`, `sentinel/` or
+  `policies/`; the api died at import from slice 3a onward. The dev loop runs from the
+  source tree, so nothing noticed. ADR 0006 schedules `verify-compose` at two gates
+  precisely for this; only the second gate was run.
+- **Three controls looked applied and did nothing.** `telemetry: false` is not a valid
+  Next config key (Next rejects it and keeps posting; only the env var works). The
+  first database-identity guard read the revision via `docker compose exec`, so it
+  always reported our own container whatever the port said. A token-forgery test
+  "tampered" by string-replacing a base64 payload, so it matched nothing and tested an
+  unmodified token. Each was caught only by testing the control against the condition
+  it exists to catch.
+- **The guard hook fired on `.env.example`**, a file that must be committed. It blocked
+  a correct commit twice. Narrowed, with tests asserting real secrets are still
+  blocked. A tripwire that fires on correct behaviour teaches evasion.
+- **One observed flake, unexplained.** A pipeline idempotency test failed once and has
+  passed on every run since. It happened immediately after `verify-compose` tore the
+  containers down, so the leading hypothesis is transient database state during
+  restart — a hypothesis, not a diagnosis. If it recurs, capture the assertion output
+  first: the row counts distinguish a duplicate from a missing row, and those have
+  different causes.
+- **Generating Python with a shell heredoc corrupts escapes.** `\\t` became a literal
+  tab and `\\n` a real newline, producing a silently non-applied edit and a syntax
+  error. Use the Edit tool for anything containing escapes.
 
 ## Slices completed
+
 - [x] **1a Skeleton** — postgres + two roles, /health, structured logs, Alembic, tasks.py
 - [x] **1b Skeleton** — worker, web health page, Dockerfiles, four-container compose
 - [x] **2 Domain model** — 12 tables, audit chain + REVOKE (mutation-tested), seed
 - [x] **6a Fixture pack** — 10 documents, EN+HI, ground-truth sidecars with bboxes
-- [x] **3a Policy + query-level authz** - evaluator, registry, filter, agreement test
+- [x] **3a Policy + query-level authz** — evaluator, registry, filter, agreement test
 - [x] **3b Session, PolicyDecision persistence, HTTP routes, Sentinel registry**
 - [x] **4a Integrity** — BlobStore, LocalAnchorStore, verify() with five states
 - [x] **5a Golden thread, headless** — OCR, extraction, sign, anchor, idempotent
-- [ ] 5b Verification UI (minimum)
 - [x] **7 Destructive redaction + role-switch** — remove/rasterise/rebuild, VIC-01 closed
-- [ ] ——— hard stop on coding at hour 30 ———
-- [ ] 8 Sentinel dashboard (Tier C)
 - [x] **11a OCR accuracy table** — CER by language, latency, caveats on the page
 - [ ] 4b Upload hardening (Tier C)
 - [ ] 6b Corpus scale-up (Tier C)
+- [ ] 5b Verification UI (Tier C — span highlighting; the API path exists)
+- [ ] 8 Sentinel dashboard page (Tier C — the 11 scenarios exist and run in the CLI)
 
 Cut: 10 (completeness engine), 11's extraction metric, 12 (selective disclosure).
