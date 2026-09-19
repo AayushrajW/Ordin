@@ -44,11 +44,11 @@ from infra.textsource import TesseractOcr, TextSourceUnavailable  # noqa: E402
 # Hand-written fixtures only, addressed by slug. The generated variants are for the
 # accuracy figure; these are the ones whose content reads sensibly on a screen.
 PLAN = [
-    ("VRN-N/2026/0001", ["complaint-0001", "witness-0003"]),
+    ("VRN-N/2026/0001", ["complaint-0001", "statement-0011", "witness-0003"]),
     ("VRN-S/2026/0002", ["complaint-0002"]),
     ("VRN-N/2026/0003", ["complaint-0008-hi"]),
 ]
-REDACT_IN = "complaint-0001.pdf"
+REDACT_IN = "statement-0011.pdf"
 
 
 async def load_demo() -> int:

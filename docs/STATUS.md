@@ -40,9 +40,9 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**325 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
-`tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **15/15** from a clean
-database.
+**363 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+`tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
+back. Compose path verified at **226 MiB**.
 
 **Do not run two suites against one database.** A session-scoped guard in
 `tests/conftest.py` refuses the second one with an explanation — see *Surprising*
@@ -52,6 +52,22 @@ below, because this was the "unexplained flake" for weeks.
 a second one makes it `-qq`. Use `tasks.py test`.
 
 ## Landed this session
+
+- **Redesigned UI.** A design system (ink chrome, archival paper, brass for authority),
+  an identity chooser, a case dashboard, case pages that explain *why* you can see them,
+  a three-pane document workbench, and a Sentinel security console. Server-rendered,
+  no client JavaScript required.
+- **Detection engine** (`domain/pii.py`, ADR 0020). Every mention of an identifying
+  value across the whole page — narrative, OCR-mangled, surname-only — plus Aadhaar
+  with Verhoeff validation, PAN, mobile, e-mail, vehicle. Redaction of the specimen
+  statement went from 3 labelled lines to 16 regions. Preview before burning.
+- **Consistency engine** (`domain/consistency.py`). Flags the real OCR misreads —
+  a reference one character off its case, a phone with a digit missing — and offers
+  the correction as a button a person must press. Real per-word OCR confidence
+  replaces the pattern's hardcoded 1.0.
+- **Hardening** (ADR 0021). Verify-on-read, per-viewer watermark, audit row per view,
+  rate limits, hardened headers on API and web, cross-site refusal on form routes.
+  Sentinel REDACT-05, INTEG-01, SEC-01, SEC-02.
 
 - **Slice 5b — verification UI** (Tier A). Case list, case view, the verify-and-commit
   screen with provenance on the page, corrections, manual entry, and the redact action.
@@ -85,20 +101,20 @@ OCR character error rate, real Tesseract over rasterised pages, 48-document corp
 
 | language | documents | chars | errors | CER |
 |---|---|---|---|---|
-| eng | 37 | 14841 | 492 | **3.32%** |
-| hin | 11 | 4052 | 837 | **20.66%** |
+| eng | 37 | 15770 | 560 | **3.55%** |
+| hin | 11 | 4151 | 976 | **23.51%** |
 
 | condition | documents | chars | errors | CER |
 |---|---|---|---|---|
-| clean renders | 38 | 15130 | 306 | **2.02%** |
-| degraded scans | 10 | 3763 | 1023 | **27.19%** |
+| clean renders | 37 | 15528 | 335 | **2.16%** |
+| degraded scans | 11 | 4393 | 1201 | **27.34%** |
 
 Latency p50 1.16s, p95 2.42s. Four containers: 317 MiB total (measured after the
 worker gained real work; it was 206 MiB when the worker only beat).
 
 **Three findings to say out loud rather than bury:**
 
-- **Degradation costs an order of magnitude.** 2.02% on clean renders against 27.19% on
+- **Degradation costs an order of magnitude.** 2.16% on clean renders against 27.34% on
   a mild synthetic degradation — tilt, 120 dpi, speckle, no text layer. The earlier
   0.34% headline was true of ten clean renders and is not a claim about real intake.
 - **Hindi is roughly six times worse than English** and was ten times worse on the clean
@@ -152,6 +168,21 @@ untouched; deleting it is the builder's call.
 6. Team ID for the SIH submission still unknown.
 
 ## Surprising, and worth not rediscovering
+
+- **Redaction left the victim's name in the narrative.** Field-only redaction burned
+  "Victim Name: …" and nothing else; the surname two lines later reached the grantee.
+  Every test passed because every test checked the labelled field. REDACT-05 now reads
+  the derivative and looks everywhere.
+- **A tamper test tampered nothing — again.** INTEG-01 first replaced a word in the raw
+  PDF bytes; the text lives in a compressed stream, so nothing changed and the scenario
+  went red for its own sake. It now flips a bit and asserts the bytes differ first.
+- **uvicorn's reloader on Windows can keep the old process serving** after logging a
+  reload. If an API change seems not to take, restart `tasks.py up`.
+- **Docker Desktop failed to start after the machine restarted**: a stale
+  `sailor-ingest.sock.stale` from an earlier crash blocked its own socket rename, and
+  the socket placeholder could not be deleted. Moving
+  `%LOCALAPPDATA%\Docker\run` aside (to `run.stale-<timestamp>`) and relaunching fixed
+  it. The moved folder is safe to delete once Docker is healthy.
 
 - **The "unexplained flake" was two test suites sharing one database.** Nearly every
   database test calls `seed()`, which `TRUNCATE ... CASCADE`s the case tables, so a

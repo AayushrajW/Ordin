@@ -1,20 +1,21 @@
 /**
- * Ordin Sentinel — the scenarios, on a page. Slice 8.
+ * Ordin Sentinel — every security claim this system makes, tested live.
  *
- * **Every load runs them.** Nothing here is stored and nothing is cached, because a
- * dashboard that renders a saved result can show green from an hour ago, and the
- * registry's own docstring is blunt that a check which cannot currently fail is worse
- * than no check: it manufactures confidence.
+ * **Every load runs the scenarios.** Nothing is stored or cached (ADR 0015): a
+ * dashboard rendering a saved result can show green from an hour ago, and a check that
+ * cannot currently fail manufactures confidence.
  *
- * The page renders whatever came back, including ERROR. An errored scenario proved
- * nothing and is shown as its own state rather than folded into either column —
- * folding it into "pass" is how a dashboard lies, and folding it into "fail" would
- * make a broken scenario look like a broken system.
+ * ERROR is its own state. A scenario that raised proved nothing; folding it into "pass"
+ * is how a dashboard lies, and into "fail" makes a broken instrument look like a broken
+ * system.
  *
- * What to do in front of a judge: break something on purpose — comment out the
- * disclosure check, say — reload this page, and watch a critical row go red.
+ * To show it working: break something on purpose — comment out `_require_original` in
+ * `api/documents.py` — and reload. A critical row goes red with the actual result beside
+ * the expected one.
  */
-import IdentityBar from "../components/IdentityBar";
+import Shell, { PageHeader } from "../components/Shell";
+import { IconAlert, IconArrowRight, IconCheck, IconChevron, IconShield, IconX } from "../components/icons";
+import { Notice } from "../components/ui";
 import { currentSubject, post } from "../lib/api";
 
 export const dynamic = "force-dynamic";
@@ -29,129 +30,177 @@ type Result = {
   slice_id: string;
   outcome: "pass" | "fail" | "error";
 };
-
 type Run = { ran_at: string; passing: number; total: number; results: Result[] };
 
-const SEVERITY: Record<string, string> = {
-  critical: "bg-red-50 text-red-800 border-red-200",
-  high: "bg-amber-50 text-amber-800 border-amber-200",
-  medium: "bg-slate-50 text-slate-700 border-slate-200",
+const FAMILY: Record<string, string> = {
+  AUTHZ: "Authorization",
+  REDACT: "Redaction & disclosure",
+  VERIFY: "Human commit",
+  AUDIT: "Audit chain",
+  INTEG: "Integrity",
+  SEC: "Transport & headers",
 };
 
-const OUTCOME: Record<string, { label: string; className: string }> = {
-  pass: { label: "PASS", className: "bg-emerald-100 text-emerald-800" },
-  fail: { label: "FAIL", className: "bg-red-100 text-red-800" },
-  error: { label: "ERROR", className: "bg-orange-100 text-orange-900" },
+const SEVERITY: Record<Result["severity"], string> = {
+  critical: "chip-danger",
+  high: "chip-caution",
+  medium: "chip-draft",
 };
+
+function Ring({ passing, total }: { passing: number; total: number }) {
+  const r = 52;
+  const c = 2 * Math.PI * r;
+  const share = total ? passing / total : 0;
+  const clean = passing === total;
+  return (
+    <div className="relative h-36 w-36">
+      <svg viewBox="0 0 120 120" className="h-36 w-36 -rotate-90">
+        <circle cx="60" cy="60" r={r} fill="none" stroke="#1E2A47" strokeWidth="9" />
+        <circle
+          cx="60" cy="60" r={r} fill="none"
+          stroke={clean ? "#C89C4B" : "#C2412F"} strokeWidth="9" strokeLinecap="round"
+          strokeDasharray={`${c * share} ${c}`}
+        />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-center">
+        <div>
+          <p className="num font-display text-[2.1rem] font-semibold leading-none text-white">
+            {passing}<span className="text-lg text-ink-400">/{total}</span>
+          </p>
+          <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-400">holding</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default async function SentinelPage() {
   const subject = await currentSubject();
   const run = subject ? await post<Run>("/sentinel/run") : null;
 
-  return (
-    <>
-      <IdentityBar current={subject} returnTo="/sentinel" />
-      <main className="mx-auto max-w-6xl px-6 py-10">
-        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Ordin Sentinel</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Each row is a security claim this system makes, expressed as something
-              that can visibly go red. They run against the live application on every
-              load — this is not a stored report.
-            </p>
-          </div>
-          <a
-            href={`/sentinel?t=${Date.now()}`}
-            className="rounded border border-slate-900 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-          >
-            Run again
-          </a>
-        </header>
+  const results = run && run.ok ? run.data.results : [];
+  const families = Object.entries(
+    results.reduce<Record<string, Result[]>>((acc, r) => {
+      const key = r.id.split("-")[0];
+      (acc[key] ??= []).push(r);
+      return acc;
+    }, {}),
+  );
+  const failing = results.filter((r) => r.outcome !== "pass");
+  const critical = results.filter((r) => r.severity === "critical").length;
 
+  return (
+    <Shell subject={subject} returnTo="/sentinel" active="sentinel">
+      <PageHeader
+        eyebrow="Live security verification"
+        title="Sentinel"
+        meta="Each row is a claim this system makes, expressed as something that can visibly go red — and run against the live application on every load."
+        actions={
+          <a href={`/sentinel?t=${Date.now()}`} className="btn-primary">
+            <IconShield className="h-4 w-4" /> Run again
+          </a>
+        }
+      />
+
+      <div className="mx-auto max-w-[88rem] space-y-8 px-6 py-8 lg:px-10">
         {!subject || !run ? (
-          <p className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">
-            Choose a specimen identity above. Sentinel exercises authorization
-            boundaries, so it is not a route an unauthenticated caller can reach.
-          </p>
+          <Notice tone="signal" title="Choose a specimen identity first">
+            Sentinel exercises authorization boundaries, so it is not reachable without a session.
+          </Notice>
         ) : !run.ok ? (
-          <p className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-800">
-            The scenarios did not run. {run.reason} The dashboard is restricted to the
-            development environment (docs/adr/0015).
-          </p>
+          <Notice tone="danger" title="The scenarios did not run">
+            {run.reason} The runner is restricted to the development environment (ADR 0015).
+          </Notice>
         ) : (
           <>
-            <div
-              className={`mb-6 rounded-lg border p-5 ${
-                run.data.passing === run.data.total
-                  ? "border-emerald-200 bg-emerald-50"
-                  : "border-red-200 bg-red-50"
-              }`}
-            >
-              <p className="text-lg font-medium">
-                {run.data.passing}/{run.data.total} passing
-              </p>
-              <p className="mt-1 text-xs text-slate-600">
-                ran at {new Date(run.data.ran_at).toLocaleString()}
-              </p>
-            </div>
+            <section className="surface-ink relative overflow-hidden">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_120%_at_100%_0%,rgba(200,156,75,0.14),transparent_60%)]" />
+              <div className="relative flex flex-wrap items-center gap-8 px-8 py-7">
+                <Ring passing={run.data.passing} total={run.data.total} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300">
+                    {failing.length === 0 ? "All claims holding" : `${failing.length} claim${failing.length === 1 ? "" : "s"} not holding`}
+                  </p>
+                  <p className="mt-2 font-serif text-[1.9rem] leading-tight text-white">
+                    {failing.length === 0
+                      ? "Every security claim held against the running system."
+                      : "Something this system promises is not currently true."}
+                  </p>
+                  <p className="mt-3 text-sm text-ink-300">
+                    Ran {new Date(run.data.ran_at).toLocaleTimeString("en-IN", { hour12: false })} ·{" "}
+                    {critical} critical scenarios · nothing stored, nothing cached
+                  </p>
+                </div>
+                <dl className="grid grid-cols-3 gap-6 text-center">
+                  {(["critical", "high", "medium"] as const).map((s) => {
+                    const all = results.filter((r) => r.severity === s);
+                    const ok = all.filter((r) => r.outcome === "pass").length;
+                    return (
+                      <div key={s}>
+                        <dt className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-400">{s}</dt>
+                        <dd className="num mt-1 font-display text-2xl font-semibold text-white">{ok}<span className="text-sm text-ink-500">/{all.length}</span></dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              </div>
+            </section>
 
-            <ul className="space-y-3">
-              {run.data.results.map((r) => (
-                <li
-                  key={r.id}
-                  className={`rounded-lg border bg-white p-4 ${
-                    r.outcome === "pass" ? "border-slate-200" : "border-red-300"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs font-semibold ${
-                        OUTCOME[r.outcome].className
-                      }`}
-                    >
-                      {OUTCOME[r.outcome].label}
-                    </span>
-                    <span className="font-mono text-sm font-medium">{r.id}</span>
-                    <span
-                      className={`rounded border px-2 py-0.5 text-xs ${SEVERITY[r.severity]}`}
-                    >
-                      {r.severity}
-                    </span>
-                    <span className="text-xs text-slate-400">slice {r.slice_id}</span>
-                  </div>
+            {families.map(([family, rows]) => (
+              <section key={family}>
+                <div className="mb-3 flex items-baseline justify-between">
+                  <h2 className="section-title">{FAMILY[family] ?? family}</h2>
+                  <p className="text-xs text-ink-400">
+                    {rows.filter((r) => r.outcome === "pass").length} of {rows.length} holding
+                  </p>
+                </div>
+                <ul className="surface divide-y divide-paper-200 overflow-hidden">
+                  {rows.map((r) => (
+                    <li key={r.id}>
+                      <details className="group" open={r.outcome !== "pass"}>
+                        <summary className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-paper-50">
+                          <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
+                            r.outcome === "pass" ? "bg-verified-50 text-verified-600 ring-1 ring-verified-100"
+                              : r.outcome === "fail" ? "bg-danger-50 text-danger-600 ring-1 ring-danger-100"
+                                : "bg-caution-50 text-caution-600 ring-1 ring-caution-100"}`}>
+                            {r.outcome === "pass" ? <IconCheck className="h-3.5 w-3.5" /> : r.outcome === "fail" ? <IconX className="h-3.5 w-3.5" /> : <IconAlert className="h-3.5 w-3.5" />}
+                          </span>
+                          <span className="mono w-24 shrink-0 font-semibold text-ink-800">{r.id}</span>
+                          <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-ink-700">{r.invariant}</span>
+                          <span className={SEVERITY[r.severity]}>{r.severity}</span>
+                          <IconChevron className="h-4 w-4 text-ink-300 transition group-open:rotate-90" />
+                        </summary>
+                        <div className="grid gap-4 border-t border-paper-200 bg-paper-50/60 px-5 py-4 md:grid-cols-3">
+                          <div>
+                            <p className="eyebrow">Setup</p>
+                            <p className="mt-1 text-[0.8125rem] leading-relaxed text-ink-700">{r.setup}</p>
+                          </div>
+                          <div>
+                            <p className="eyebrow">Expected</p>
+                            <p className="mt-1 text-[0.8125rem] leading-relaxed text-ink-700">{r.expected}</p>
+                          </div>
+                          <div>
+                            <p className="eyebrow flex items-center gap-1">Actual <IconArrowRight className="h-3 w-3" /></p>
+                            <p className={`mt-1 text-[0.8125rem] font-medium leading-relaxed ${r.outcome === "pass" ? "text-verified-700" : "text-danger-700"}`}>
+                              {r.actual}
+                            </p>
+                          </div>
+                        </div>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
 
-                  <dl className="mt-3 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[7rem_1fr]">
-                    <dt className="text-xs uppercase tracking-wide text-slate-400">
-                      Invariant
-                    </dt>
-                    <dd className="text-slate-700">{r.invariant}</dd>
-                    <dt className="text-xs uppercase tracking-wide text-slate-400">Setup</dt>
-                    <dd className="text-slate-700">{r.setup}</dd>
-                    <dt className="text-xs uppercase tracking-wide text-slate-400">
-                      Expected
-                    </dt>
-                    <dd className="text-slate-700">{r.expected}</dd>
-                    <dt className="text-xs uppercase tracking-wide text-slate-400">Actual</dt>
-                    <dd
-                      className={
-                        r.outcome === "pass" ? "text-slate-700" : "font-medium text-red-800"
-                      }
-                    >
-                      {r.actual}
-                    </dd>
-                  </dl>
-                </li>
-              ))}
-            </ul>
-
-            <p className="mt-8 max-w-3xl text-xs text-slate-400">
-              An ERROR row means the scenario itself broke and proved nothing. It is
-              never counted as a pass.
+            <p className="text-xs text-ink-400">
+              An error row means the scenario itself broke and proved nothing; it is never
+              counted as a pass. Green means these specific claims held just now — not that
+              the system is secure. The accepted risks in the threat model are not covered here.
             </p>
           </>
         )}
-      </main>
-    </>
+      </div>
+    </Shell>
   );
 }

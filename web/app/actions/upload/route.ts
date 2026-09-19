@@ -13,6 +13,8 @@
  */
 import { cookies } from "next/headers";
 
+import { isCrossSite, refuse } from "../../lib/guard";
+
 const API_ORIGIN = process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -34,6 +36,7 @@ function back(path: string, key?: string, value?: string): Response {
 }
 
 export async function POST(request: Request) {
+  if (isCrossSite(request)) return refuse();
   const form = await request.formData();
   const caseId = form.get("case_id");
   const raw = form.get("next");
@@ -67,6 +70,7 @@ export async function POST(request: Request) {
 
   if (upstream.status === 401) return back(target, "error", "session");
   if (upstream.status === 404) return back(target, "error", "refused");
+  if (upstream.status === 429) return back(target, "error", "rate");
   if (upstream.status === 422) {
     const detail = (await upstream.json().catch(() => ({}))) as { detail?: string };
     return back(target, "error", CODES[detail.detail ?? ""] ?? "refused");

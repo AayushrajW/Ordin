@@ -48,7 +48,10 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              // React's development build uses eval() to reconstruct call stacks; the
+              // production build never does. Granting it in dev only keeps the policy
+              // the demo path (`next start`) ships with strict.
+              `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data:",
               `connect-src 'self' ${process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000"}`,
@@ -58,6 +61,20 @@ const nextConfig = {
           },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "no-referrer" },
+          // frame-ancestors above covers modern browsers; this covers the rest.
+          { key: "X-Frame-Options", value: "DENY" },
+          // A window this app opens cannot reach back into it, and it cannot be
+          // reached from one it did not open.
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+          // Nothing here needs a camera, microphone, location or payment API, so
+          // nothing injected into a page can ask for one either.
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+          },
+          // Every page is the product of an authorization decision for one session.
+          { key: "Cache-Control", value: "no-store, private" },
         ],
       },
     ];

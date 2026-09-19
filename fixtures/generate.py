@@ -195,6 +195,26 @@ CORPUS: list[Doc] = [
             "वह आवश्यकता होने पर उपस्थित होने को तैयार है।",
         ],
     ),
+    # The document the redaction engine is proven against. Every identifying value
+    # recurs in the narrative - full name, surname alone, given name alone, the phone
+    # number and the street address - because that is how statements are written, and
+    # a redaction that only covers the labelled lines leaves all of it standing.
+    Doc(
+        slug="statement-0011", title="Victim Statement", language="eng",
+        station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
+        fields=[
+            Field("victim_name", "Rukmini Deshmukh"),
+            Field("victim_phone", "0900000111"),
+            Field("victim_address", "27 Banyan Cross, Vranaspur North"),
+        ],
+        body=[
+            "The statement of Ms Rukmini Deshmukh was recorded at her request.",
+            "Ms Deshmukh stated that she had been followed on three occasions.",
+            "She asked to be contacted only on 0900000111, not at 27 Banyan Cross.",
+            "Rukmini identified the vehicle as a grey two-wheeler.",
+            "The statement was read over to her and she agreed it was correct.",
+        ],
+    ),
     Doc(
         slug="property-0010", title="Property Register Extract", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",

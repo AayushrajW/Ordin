@@ -1,3 +1,120 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Ordin — base layer and component primitives.
+ *
+ * Components are CSS classes rather than a component library: no dependency, no
+ * JavaScript, and the pages render complete on the server with scripting disabled.
+ */
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-paper font-sans text-ink-900;
+    font-feature-settings: "cv11", "ss01", "tnum" 0;
+  }
+  ::selection {
+    @apply bg-brass-100 text-ink-900;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brass-400 ring-offset-2 ring-offset-paper;
+  }
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}
+
+@layer components {
+  /* --- surfaces --------------------------------------------------------------- */
+  .surface {
+    @apply rounded-xl border border-paper-300/70 bg-white shadow-card;
+  }
+  .surface-quiet {
+    @apply rounded-xl border border-paper-300/60 bg-paper-50;
+  }
+  .surface-ink {
+    @apply rounded-xl border border-ink-700 bg-ink-850 text-ink-100;
+  }
+
+  /* --- type ------------------------------------------------------------------- */
+  .eyebrow {
+    @apply text-[0.6875rem] font-semibold uppercase tracking-eyebrow text-ink-400;
+  }
+  .page-title {
+    @apply font-serif text-[2rem] leading-tight tracking-tight text-ink-900;
+  }
+  .section-title {
+    @apply font-display text-[0.95rem] font-semibold tracking-tight text-ink-900;
+  }
+  .mono {
+    @apply font-mono text-[0.8125rem] tracking-tight;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- buttons ---------------------------------------------------------------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-[0.8125rem] font-semibold transition duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white shadow-sm hover:bg-ink-800 active:bg-ink-950;
+  }
+  .btn-brass {
+    @apply btn bg-brass-500 text-white shadow-seal hover:bg-brass-600;
+  }
+  .btn-quiet {
+    @apply btn border border-paper-300 bg-white text-ink-800 hover:border-ink-300 hover:bg-paper-50;
+  }
+  .btn-danger {
+    @apply btn border border-danger-100 bg-danger-50 text-danger-700 hover:border-danger-500/40;
+  }
+  .btn-ghost-ink {
+    @apply btn text-ink-200 hover:bg-ink-800 hover:text-white;
+  }
+
+  /* --- chips ------------------------------------------------------------------ */
+  .chip {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[0.6875rem] font-semibold tracking-wide;
+  }
+  .chip-verified { @apply chip bg-verified-50 text-verified-700 ring-1 ring-inset ring-verified-100; }
+  .chip-draft { @apply chip bg-paper-200 text-ink-600 ring-1 ring-inset ring-paper-300; }
+  .chip-caution { @apply chip bg-caution-50 text-caution-700 ring-1 ring-inset ring-caution-100; }
+  .chip-danger { @apply chip bg-danger-50 text-danger-700 ring-1 ring-inset ring-danger-100; }
+  .chip-signal { @apply chip bg-signal-50 text-signal-700 ring-1 ring-inset ring-signal-100; }
+  .chip-brass { @apply chip bg-brass-50 text-brass-700 ring-1 ring-inset ring-brass-100; }
+  .chip-ink { @apply chip bg-ink-800 text-ink-100 ring-1 ring-inset ring-ink-600; }
+
+  .dot { @apply inline-block h-1.5 w-1.5 rounded-full; }
+
+  /* --- forms ------------------------------------------------------------------ */
+  .field {
+    @apply w-full rounded-lg border border-paper-300 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 transition focus:border-brass-400 focus:outline-none focus:ring-2 focus:ring-brass-100;
+  }
+
+  /* --- misc ------------------------------------------------------------------- */
+  .divider { @apply h-px w-full bg-paper-300/70; }
+  .kbd {
+    @apply rounded border border-paper-300 bg-paper-50 px-1.5 py-0.5 font-mono text-[0.6875rem] text-ink-500;
+  }
+  .grain {
+    background-image: radial-gradient(rgba(11, 18, 34, 0.035) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+  .desk {
+    background:
+      radial-gradient(120% 80% at 50% 0%, #1B2745 0%, #0B1222 60%, #070B16 100%);
+  }
+}

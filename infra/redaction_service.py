@@ -23,6 +23,7 @@ The manifest never stores removed text — only geometry, a rule id and a per-ma
 salted hash (ADR 0009's reasoning, and threat VIC-04).
 """
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
@@ -30,6 +31,7 @@ import sqlalchemy as sa
 from domain.enums import AuditAction
 from infra.audit_log import append_audit
 from infra.blobstore import BlobStore
+from domain.pii import FindingKind, KnownValue, detect, kind_for_field
 from infra.redact import Region, redact
 
 
@@ -37,47 +39,120 @@ class RedactionUnavailable(RuntimeError):
     """Raised when nothing could be located to remove. Never a silent no-op."""
 
 
-async def regions_for_fields(conn, *, version_id: str, field_ids: list[str]) -> list[Region]:
-    """Resolve each field's character span to the OCR word boxes it covers."""
-    if not field_ids:
-        return []
+@dataclass(frozen=True)
+class PlannedFinding:
+    """One thing the planner will remove, with where it sits on the page."""
 
-    rows = (
+    kind: str
+    rule_id: str
+    confidence: float
+    source: str | None
+    start: int
+    end: int
+    boxes: list[tuple[int, float, float, float, float]]
+    """(page_no, x0, y0, x1, y1) for every OCR word the span covers."""
+
+
+@dataclass(frozen=True)
+class RedactionPlan:
+    findings: list[PlannedFinding]
+    unlocated: int
+    """Findings whose span matched no OCR word box — found in text, not on the page."""
+
+    def regions(self, text: str) -> list[Region]:
+        out: list[Region] = []
+        for f in self.findings:
+            for page_no, x0, y0, x1, y1 in f.boxes:
+                out.append(Region(
+                    page_no=page_no, x0=x0, y0=y0, x1=x1, y1=y1,
+                    rule_id=f"{f.rule_id}:{f.source or f.kind}",
+                    # Held only long enough to hash into the manifest; never stored.
+                    removed_text=text[f.start:f.end],
+                ))
+        return out
+
+
+async def plan_redaction(
+    conn, *, version_id: str, case_id: str, field_ids: list[str] | None = None,
+    include_parties: bool = True, include_patterns: bool = True,
+) -> tuple[RedactionPlan, str]:
+    """Everything identifying on the page, found by `domain.pii`, mapped to rectangles.
+
+    **Known values come from three places.** The fields the operator selected — or, if
+    none were, every identifying field on the version. The parties recorded against the
+    case, so a name that was never labelled on *this* page is still found because the
+    case knows it. And patterns, for identifiers nobody recorded at all.
+
+    Each is then searched for across the whole text, not only where it was labelled,
+    which is the difference between this and slice 7's first implementation: that one
+    burned out "Victim Name: …" and left the surname standing in the narrative.
+
+    Returns the plan and the OCR text it was computed over.
+    """
+    text = (
+        await conn.execute(
+            sa.text("SELECT text FROM ocr_text WHERE version_id = :v"), {"v": version_id}
+        )
+    ).scalar_one_or_none()
+    if not text:
+        return RedactionPlan([], 0), ""
+
+    field_rows = (
         await conn.execute(
             sa.text(
-                "SELECT f.id, f.field_key, f.value, f.source_span_start, f.source_span_end "
-                "FROM extracted_field f WHERE f.version_id = :v AND f.id IN :ids"
-            ).bindparams(sa.bindparam("ids", expanding=True)),
-            {"v": version_id, "ids": [uuid.UUID(f) for f in field_ids]},
+                "SELECT id, field_key, value FROM extracted_field WHERE version_id = :v"
+            ),
+            {"v": version_id},
+        )
+    ).mappings().all()
+    wanted = {str(f) for f in (field_ids or [])}
+    known: list[KnownValue] = []
+    for row in field_rows:
+        if wanted and str(row["id"]) not in wanted:
+            continue
+        kind = kind_for_field(row["field_key"])
+        if kind is not None:
+            known.append(KnownValue(row["field_key"], row["value"], kind))
+
+    if include_parties:
+        parties = (
+            await conn.execute(
+                sa.text("SELECT role, display_name FROM party WHERE case_id = :c"),
+                {"c": case_id},
+            )
+        ).mappings().all()
+        for party in parties:
+            known.append(KnownValue(f"party:{party['role']}", party["display_name"],
+                                    FindingKind.NAME))
+
+    findings = detect(text, known, patterns=include_patterns)
+
+    words = (
+        await conn.execute(
+            sa.text(
+                "SELECT page_no, char_start, char_end, x0, y0, x1, y1 FROM ocr_word "
+                "WHERE version_id = :v ORDER BY char_start"
+            ),
+            {"v": version_id},
         )
     ).mappings().all()
 
-    regions: list[Region] = []
-    for row in rows:
-        if row["source_span_start"] is None:
-            # A hand-entered value has no span into the OCR text, so there is no
-            # rectangle to burn. Skipped rather than approximated: a box in the wrong
-            # place is worse than no box, because it looks like the name was covered.
+    planned: list[PlannedFinding] = []
+    unlocated = 0
+    for f in findings:
+        boxes = [
+            (w["page_no"], w["x0"], w["y0"], w["x1"], w["y1"])
+            for w in words
+            if w["char_start"] < f.end and w["char_end"] > f.start
+        ]
+        if not boxes:
+            unlocated += 1
             continue
-        words = (
-            await conn.execute(
-                sa.text(
-                    "SELECT page_no, x0, y0, x1, y1 FROM ocr_word "
-                    "WHERE version_id = :v AND char_end > :s AND char_start < :e"
-                ),
-                {"v": version_id, "s": row["source_span_start"], "e": row["source_span_end"]},
-            )
-        ).mappings().all()
-        for word in words:
-            regions.append(
-                Region(
-                    page_no=word["page_no"],
-                    x0=word["x0"], y0=word["y0"], x1=word["x1"], y1=word["y1"],
-                    rule_id=row["field_key"],
-                    removed_text=row["value"],
-                )
-            )
-    return regions
+        planned.append(PlannedFinding(
+            kind=f.kind.value, rule_id=f.rule_id, confidence=f.confidence,
+            source=f.source, start=f.start, end=f.end, boxes=boxes,
+        ))
+    return RedactionPlan(planned, unlocated), text
 
 
 async def create_redacted_version(
@@ -89,6 +164,8 @@ async def create_redacted_version(
     field_ids: list[str],
     actor_id: str,
     at: datetime | None = None,
+    include_parties: bool = True,
+    include_patterns: bool = True,
 ) -> dict:
     """Produce the derivative, store it, and record what was removed.
 
@@ -114,9 +191,11 @@ async def create_redacted_version(
     if source is None:
         raise RedactionUnavailable("the original bytes are not in the store")
 
-    regions = await regions_for_fields(
-        conn, version_id=parent_version_id, field_ids=field_ids
+    plan, text = await plan_redaction(
+        conn, version_id=parent_version_id, case_id=case_id, field_ids=field_ids,
+        include_parties=include_parties, include_patterns=include_patterns,
     )
+    regions = plan.regions(text)
     if not regions:
         # Refusing beats producing a "redacted" copy identical to the original, which
         # would be handed to a grantee as though something had been removed.

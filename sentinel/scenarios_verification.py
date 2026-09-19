@@ -84,7 +84,39 @@ async def _ensure_document(ctx) -> tuple[str, str]:
     slice_id=SLICE,
 )
 async def only_a_human_commit_writes_verified(ctx) -> str:
-    case_id, version_id = await _ensure_document(ctx)
+    """Runs on a specimen minted for this run, so there is always a fresh draft.
+
+    An earlier version reused the demo document, and on a second run found the field a
+    human had committed during the first — then reported that the *pipeline* had
+    written `verified`. The claim is about what the pipeline emits, so it needs a
+    version the pipeline has only just produced.
+    """
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 96), "SPECIMEN - NOT A REAL RECORD", fontsize=11)
+    page.insert_text((72, 120), f"Reference: SNT/{uuid.uuid4().hex[:10]}", fontsize=10)
+    page.insert_text((72, 138), "Complainant Name: Specimen Person", fontsize=10)
+    data = doc.tobytes()
+    doc.close()
+
+    from infra.anchor import LocalAnchorStore
+    from infra.esign import SimulatedESignProvider
+    from infra.pipeline import Pipeline
+    from infra.textsource import EmbeddedTextLayer
+
+    await _sign_in(ctx, "officer")
+    case_id = (await ctx.client.get("/cases?limit=50")).json()[0]["id"]
+    async with ctx.engine.begin() as conn:
+        actor = (await conn.execute(sa.text("SELECT id FROM app_user LIMIT 1"))).scalar_one()
+        result = await Pipeline(
+            blobs=ctx.blobs, text_source=EmbeddedTextLayer(),
+            signer=SimulatedESignProvider("sentinel"), anchors=LocalAnchorStore(),
+        ).run(conn, case_id=uuid.UUID(case_id), filename="sentinel-verify.pdf",
+              data=data, actor_id=actor)
+    version_id = result.version_id
+
     fields = (await ctx.client.get(f"/versions/{version_id}/fields")).json()
     machine = [f for f in fields if f["source"] != "human"]
     assert machine, "the pipeline extracted nothing, so this proves nothing"

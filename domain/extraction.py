@@ -65,6 +65,7 @@ EXTRACTORS: tuple[Extractor, ...] = (
     _labelled("complainant_phone", r"Complainant\s+Phone"),
     _labelled("victim_name", r"Victim\s+Name"),
     _labelled("victim_address", r"Victim\s+Address"),
+    _labelled("victim_phone", r"Victim\s+Phone"),
     _labelled("witness_name", r"Witness\s+Name"),
     _labelled("witness_address", r"Witness\s+Address"),
     _labelled("witness_phone", r"Witness\s+Phone"),

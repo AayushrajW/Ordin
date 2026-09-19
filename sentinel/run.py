@@ -43,7 +43,7 @@ async def main() -> int:
     async with engine.connect() as conn:
         ids = await load_ids(conn)
 
-    transport = httpx.ASGITransport(app=app)
+    transport = httpx.ASGITransport(app=app, client=("sentinel.internal", 0))
     async with httpx.AsyncClient(transport=transport, base_url="http://sentinel") as client:
         results = await run_all(
             Ctx(client=client, engine=engine, ids=ids, blobs=app.state.blobs)

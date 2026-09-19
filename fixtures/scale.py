@@ -42,6 +42,8 @@ import fitz
 
 from fixtures.generate import CORPUS, DEFAULT_OUT, Doc, Field, _render
 
+TEMPLATES = CORPUS[:10]
+
 # Fictional throughout, and visibly so. No real person, station or district.
 GIVEN = [
     "Anjali", "Farida", "Sunita", "Rukmini", "Devika", "Parvati", "Zainab", "Lalita",
@@ -154,7 +156,11 @@ def scale_corpus(
     index = 1000
     while len(written) < count:
         index += 1
-        template = CORPUS[rng.randrange(len(CORPUS))]
+        # The first ten only. A hand-written document added later must not reshuffle
+        # every draw of the seeded generator, or the degraded set and every accuracy
+        # figure measured on it would change for a reason that has nothing to do with
+        # OCR.
+        template = TEMPLATES[rng.randrange(len(TEMPLATES))]
         variant = _variant(rng, template, index)
         should_degrade = rng.random() < degraded_share
 

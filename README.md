@@ -30,7 +30,7 @@ exists for. If something is wrong it tells you which thing.
 ### The three things worth seeing
 
 ```bash
-python tasks.py sentinel         # 15 security scenarios, each able to go red
+python tasks.py sentinel         # 19 security scenarios, each able to go red
 python tasks.py evaluate         # OCR accuracy and latency, with its caveats
 python tasks.py verify-compose   # all four containers, inside 8 GB
 ```
@@ -57,7 +57,7 @@ something you watch pass rather than something we assert.
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-323 tests. `python tasks.py test`.
+363 tests. `python tasks.py test`.
 
 ---
 
@@ -80,8 +80,10 @@ it makes them:
 - **Redaction removes what it was told to remove.** Region selection is patterns over
   OCR text plus a human; there is no entity recognition and no LLM, so a handwritten
   name or a photographed ID card is never located. OCR bounds it further: character
-  error rate is **2.0% on clean renders and 27.2% on degraded scans**, and **20.7% on
-  Hindi**. Redaction is least reliable exactly where the documents are worst.
+  error rate is **2.2% on clean renders and 27.3% on degraded scans**, and **23.5% on
+  Hindi**. Redaction is least reliable exactly where the documents are worst — which
+  is why it now finds every mention of a known value, including OCR-mangled ones,
+  rather than only the labelled line.
 - **Upload hardening strips active content; it is not malware scanning.** A PDF's
   JavaScript, launch actions and embedded files are removed and the result is
   re-checked before storage. Nothing inspects what the document *says*.

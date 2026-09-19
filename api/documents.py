@@ -76,6 +76,18 @@ class FieldOut(BaseModel):
     model: str | None = None
     verified_by: str | None = None
     entered_by: str | None = None
+    # The OCR engine's own confidence in the words this value was read from — the
+    # lowest of them. `confidence` above is the pattern's, which is always 1.0 for a
+    # deterministic match and says nothing about whether the text was read correctly.
+    ocr_confidence: float | None = None
+    anomalies: list["AnomalyOut"] = []
+
+
+class AnomalyOut(BaseModel):
+    code: str
+    severity: str
+    message: str
+    suggestion: str | None = None
 
 
 class FieldEntry(BaseModel):
@@ -100,6 +112,7 @@ class SpanOut(BaseModel):
 
 
 DocumentOut.model_rebuild()
+FieldOut.model_rebuild()
 
 
 # --- resolution ---------------------------------------------------------------
@@ -309,12 +322,18 @@ async def version_fields(
     subject: Subject = Depends(require_subject),
     policy: Policy = Depends(get_policy),
 ) -> list[FieldOut]:
-    # `_resolve_version` is the gate, and it is a stronger one than
-    # `readable_fields`: that function decides whether a version's field values may be
-    # disclosed, while this refuses the version itself unless it is in the subject's
-    # readable set. Reaching this select at all means the version is disclosable, so
-    # the extra columns the screen needs come back with it rather than through a
-    # second, narrower query that would then need widening.
+    """Fields, each with the OCR engine's confidence and any consistency anomalies.
+
+    `_resolve_version` is the gate, and a stronger one than `readable_fields`: it
+    refuses the version itself unless it is in the subject's readable set, so reaching
+    the select below means the version is disclosable.
+
+    The anomalies are questions for the human, never corrections (invariant 9). The
+    reference check compares against the case the document is *filed in*, which the
+    subject can already read — so it discloses nothing new.
+    """
+    from domain.consistency import check_field
+
     now = datetime.now(timezone.utc)
     async with request.app.state.engine.connect() as conn:
         await _resolve_version(conn, policy, subject, version_id, now)
@@ -331,8 +350,45 @@ async def version_fields(
                 {"v": version_id},
             )
         ).mappings().all()
-    return [
-        FieldOut(
+        case_reference = (
+            await conn.execute(
+                sa.text(
+                    "SELECT c.reference FROM document_version dv "
+                    "JOIN document d ON d.id = dv.document_id "
+                    "JOIN case_record c ON c.id = d.case_id WHERE dv.id = :v"
+                ),
+                {"v": version_id},
+            )
+        ).scalar_one_or_none()
+        words = (
+            await conn.execute(
+                sa.text(
+                    "SELECT char_start, char_end, confidence FROM ocr_word "
+                    "WHERE version_id = :v AND confidence IS NOT NULL"
+                ),
+                {"v": version_id},
+            )
+        ).mappings().all()
+
+    def lowest(start, end) -> float | None:
+        if start is None or end is None:
+            return None
+        scores = [w["confidence"] for w in words if w["char_start"] < end and w["char_end"] > start]
+        return min(scores) if scores else None
+
+    out: list[FieldOut] = []
+    for r in rows:
+        ocr_confidence = lowest(r["source_span_start"], r["source_span_end"])
+        anomalies = []
+        if r["status"] == "draft" and r["source"] != "human":
+            anomalies = [
+                AnomalyOut(code=a.code, severity=a.severity.value, message=a.message,
+                           suggestion=a.suggestion)
+                for a in check_field(r["field_key"], r["value"],
+                                     case_reference=case_reference,
+                                     word_confidence=ocr_confidence)
+            ]
+        out.append(FieldOut(
             id=str(r["id"]),
             field_key=r["field_key"],
             value=r["value"],
@@ -345,9 +401,10 @@ async def version_fields(
             model=r["model"],
             verified_by=str(r["verified_by"]) if r["verified_by"] else None,
             entered_by=str(r["entered_by"]) if r["entered_by"] else None,
-        )
-        for r in rows
-    ]
+            ocr_confidence=ocr_confidence,
+            anomalies=anomalies,
+        ))
+    return out
 
 
 @router.get("/versions/{version_id}/text")
@@ -389,6 +446,42 @@ async def version_text(
     }
 
 
+def _watermark(page, *, viewer: str, stamp: str) -> None:
+    """Burn the viewer's identity into the rendered page.
+
+    A rendered page is the easiest thing in the system to exfiltrate: a screenshot
+    leaves no trace in any log. A diagonal tiling of who rendered it and when turns an
+    anonymous leak into an attributable one, which is the deterrent. It is drawn on an
+    in-memory copy; the stored evidence is never touched.
+
+    Honest about what it is: a visible watermark, not a steganographic or cryptographic
+    one. It deters and attributes; it does not survive someone determined to crop it.
+    """
+    import fitz
+
+    label = f"{viewer}  -  {stamp}"
+    rect = page.rect
+    y = -rect.height * 0.2
+    while y < rect.height * 1.2:
+        x = -rect.width * 0.3
+        while x < rect.width * 1.1:
+            pivot = fitz.Point(x, y)
+            page.insert_text(
+                pivot, label, fontsize=9, fontname="helv", color=(0.12, 0.16, 0.30),
+                fill_opacity=0.10, morph=(pivot, fitz.Matrix(-28)),
+            )
+            x += 250
+        y += 120
+    # A legible strip at the foot, so the attribution survives a crop of the body.
+    strip = fitz.Rect(0, rect.height - 16, rect.width, rect.height)
+    page.draw_rect(strip, color=None, fill=(0.06, 0.09, 0.16), fill_opacity=0.85)
+    page.insert_text(
+        fitz.Point(10, rect.height - 5),
+        f"Rendered for {label}  -  specimen environment  -  do not distribute",
+        fontsize=6.5, fontname="helv", color=(1, 1, 1),
+    )
+
+
 @router.get("/versions/{version_id}/page.png")
 async def version_page(
     version_id: str,
@@ -397,34 +490,66 @@ async def version_page(
     subject: Subject = Depends(require_subject),
     policy: Policy = Depends(get_policy),
 ) -> Response:
-    """The scan, rendered server-side.
+    """The scan, rendered server-side, verified, watermarked and logged.
 
-    Rendered rather than served as a PDF on purpose: a PDF handed to the browser is
-    executed by a viewer, and for a derivative it would also ship whatever the
-    container still holds. A PNG of the page is the same evidence with none of that.
+    **Rendered rather than served as a PDF.** A PDF handed to the browser is executed by
+    a viewer, and for a derivative it would ship whatever the container still holds.
+
+    **Verified on every read.** The bytes are re-hashed and compared with the digest on
+    the version row before a single pixel is drawn. A document altered on disk is
+    refused with `integrity_mismatch` rather than displayed as though it were evidence.
+
+    **Watermarked with the viewer**, and **every view is an audit row**
+    (`document_viewed`). Access to originals in an evidence system is itself evidence.
     """
     import fitz  # PyMuPDF. Imported here so the module loads without it for unit tests.
 
+    from infra.blobstore import sha256_bytes
+
     now = datetime.now(timezone.utc)
     async with request.app.state.engine.connect() as conn:
-        await _resolve_version(conn, policy, subject, version_id, now)
-        await conn.commit()
+        _, case_id, _ = await _resolve_version(conn, policy, subject, version_id, now)
         sha256 = (
             await conn.execute(
                 sa.text("SELECT sha256 FROM document_version WHERE id = :v"), {"v": version_id}
             )
         ).scalar_one()
+        viewer = (
+            await conn.execute(
+                sa.text(
+                    "SELECT u.display_name || ' (' || p.title || ')' FROM app_user u "
+                    "JOIN post p ON p.id = u.post_id WHERE u.id = :u"
+                ),
+                {"u": subject.user_id},
+            )
+        ).scalar_one()
 
-    data = request.app.state.blobs.get(sha256)
-    if data is None:
-        # The bytes are gone: that is UNAVAILABLE, not a rendering error, and the
-        # verify() route is where that distinction is reported.
-        raise HTTPException(status_code=409, detail="bytes_unavailable")
+        data = request.app.state.blobs.get(sha256)
+        if data is None:
+            await conn.commit()
+            raise HTTPException(status_code=409, detail="bytes_unavailable")
+        if sha256_bytes(data) != sha256:
+            await conn.commit()
+            raise HTTPException(status_code=409, detail="integrity_mismatch")
 
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.DOCUMENT_VIEWED,
+            object_type="document_version",
+            object_id=version_id,
+            at=now,
+        )
+        await conn.commit()
+
+    stamp = now.strftime("%Y-%m-%d %H:%M UTC")
     with fitz.open(stream=data, filetype="pdf") as doc:
         if page < 0 or page >= doc.page_count:
             raise NOT_FOUND
-        pixmap = doc[page].get_pixmap(matrix=fitz.Matrix(PAGE_ZOOM, PAGE_ZOOM))
+        target = doc[page]
+        _watermark(target, viewer=viewer, stamp=stamp)
+        pixmap = target.get_pixmap(matrix=fitz.Matrix(PAGE_ZOOM, PAGE_ZOOM))
         png = pixmap.tobytes("png")
 
     return Response(
@@ -434,6 +559,176 @@ async def version_page(
         # shared browser outlives the session that was permitted to see it.
         headers={"Cache-Control": "no-store, private"},
     )
+
+
+@router.get("/versions/{version_id}/integrity")
+async def version_integrity(
+    version_id: str,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """The five-state verdict for one version, computed now (invariant 5).
+
+    Assembles `VersionFacts` from the version row, the anchor, the disposition record
+    and a fresh hash of the bytes on disk, and hands them to the pure `verify_version`.
+    Never a boolean: a lawfully disposed document is not a tampered one, and a document
+    waiting for its anchor is not a missing one.
+    """
+    from domain.integrity import AnchorFacts, VersionFacts, verify_version
+
+    now = datetime.now(timezone.utc)
+    async with request.app.state.engine.connect() as conn:
+        await _resolve_version(conn, policy, subject, version_id, now)
+        await conn.commit()
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT dv.sha256, dv.lifecycle_state, a.content_sha256 AS anchored, "
+                    "       a.seq, a.utc_ts AS anchored_at, "
+                    "       EXISTS (SELECT 1 FROM disposition x WHERE x.version_id = dv.id) "
+                    "         AS disposed "
+                    "FROM document_version dv "
+                    "LEFT JOIN anchor_record a ON a.version_id = dv.id WHERE dv.id = :v"
+                ),
+                {"v": version_id},
+            )
+        ).mappings().one()
+
+    verdict = verify_version(VersionFacts(
+        version_id=version_id,
+        lifecycle_state=row["lifecycle_state"],
+        recorded_sha256=row["sha256"],
+        anchor=AnchorFacts(row["anchored"]) if row["anchored"] else None,
+        live_sha256=request.app.state.blobs.digest_of_stored(row["sha256"]),
+        disposition_recorded=bool(row["disposed"]),
+    ))
+    return {
+        "state": verdict.state.value,
+        "detail": verdict.detail,
+        "sha256": row["sha256"],
+        "anchor_seq": row["seq"],
+        "anchored_at": row["anchored_at"],
+        "checked_at": now,
+        "anchor_store": "LocalAnchorStore",
+        "note": "Hash-chained in the same database; not an independent attestation (AR-4).",
+    }
+
+
+@router.get("/documents/{document_id}/activity")
+async def document_activity(
+    document_id: str,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Who did what to this document, from the hash-chained audit trail.
+
+    Restricted to ORIGINAL disclosure. A purpose-limited grantee learning that an
+    original's fields were verified, and by whom, is metadata about a document they may
+    not read — the same shape of leak as VIC-01, one level out.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        uuid.UUID(document_id)
+    except ValueError:
+        raise NOT_FOUND
+    async with request.app.state.engine.connect() as conn:
+        case_id = (
+            await conn.execute(
+                sa.text("SELECT case_id FROM document WHERE id = :d"), {"d": document_id}
+            )
+        ).scalar_one_or_none()
+        if case_id is None:
+            raise NOT_FOUND
+        disclosure = await _case_disclosure(conn, policy, subject, case_id, now)
+        await conn.commit()
+        if disclosure is not Disclosure.ORIGINAL:
+            return []
+        rows = (
+            await conn.execute(
+                sa.text(
+                    "SELECT a.seq, a.action, a.object_type, a.utc_ts, "
+                    "       u.display_name AS actor, p.title AS post "
+                    "FROM audit_event a "
+                    "LEFT JOIN app_user u ON u.id::text = a.actor_id "
+                    "LEFT JOIN post p ON p.id = u.post_id "
+                    "WHERE a.object_id IN ("
+                    "  SELECT id::text FROM document_version WHERE document_id = :d "
+                    "  UNION SELECT f.id::text FROM extracted_field f "
+                    "  JOIN document_version v ON v.id = f.version_id "
+                    "  WHERE v.document_id = :d"
+                    ") ORDER BY a.seq DESC LIMIT 60"
+                ),
+                {"d": document_id},
+            )
+        ).mappings().all()
+    return [
+        {"seq": r["seq"], "action": r["action"], "object_type": r["object_type"],
+         "at": r["utc_ts"], "actor": r["actor"], "post": r["post"]}
+        for r in rows
+    ]
+
+
+@router.get("/versions/{version_id}/redaction-plan")
+async def redaction_plan(
+    version_id: str,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """A preview of everything the redaction would remove, before anything is burned.
+
+    The operator sees every region — labelled, propagated into the narrative, matched
+    despite an OCR misread, or caught by a pattern — and then decides. Requires
+    ORIGINAL: the preview is drawn over the original page.
+    """
+    import fitz
+
+    from infra.redaction_service import plan_redaction
+
+    now = datetime.now(timezone.utc)
+    async with request.app.state.engine.connect() as conn:
+        _, case_id, disclosure = await _resolve_version(conn, policy, subject, version_id, now)
+        await conn.commit()
+        _require_original(disclosure)
+        plan, _ = await plan_redaction(conn, version_id=version_id, case_id=case_id)
+        # Which findings sit on a labelled field's own span. Everything else is what a
+        # field-only redaction would have left readable — the number worth showing.
+        labelled_spans = (
+            await conn.execute(
+                sa.text(
+                    "SELECT source_span_start, source_span_end FROM extracted_field "
+                    "WHERE version_id = :v AND source_span_start IS NOT NULL"
+                ),
+                {"v": version_id},
+            )
+        ).all()
+        sha256 = (
+            await conn.execute(
+                sa.text("SELECT sha256 FROM document_version WHERE id = :v"), {"v": version_id}
+            )
+        ).scalar_one()
+    data = request.app.state.blobs.get(sha256)
+    width = height = 0.0
+    if data is not None:
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            width, height = doc[0].rect.width, doc[0].rect.height
+    return {
+        "page_width": width,
+        "page_height": height,
+        "unlocated": plan.unlocated,
+        "findings": [
+            {
+                "kind": f.kind, "rule_id": f.rule_id, "confidence": f.confidence,
+                "source": f.source,
+                "labelled": any(s < f.end and e > f.start for s, e in labelled_spans),
+                "boxes": [{"page_no": b[0], "x0": b[1], "y0": b[2], "x1": b[3], "y1": b[4]}
+                          for b in f.boxes],
+            }
+            for f in plan.findings
+        ],
+    }
 
 
 @router.get("/fields/{field_id}/spans")
@@ -604,7 +899,10 @@ async def upload_document(
 
 
 class RedactRequest(BaseModel):
-    field_ids: list[str] = Field(min_length=1, max_length=64)
+    # Empty means every identifying field on the version.
+    field_ids: list[str] = Field(default_factory=list, max_length=64)
+    include_parties: bool = True
+    include_patterns: bool = True
 
 
 @router.post("/versions/{version_id}/redact", status_code=201)
@@ -641,6 +939,8 @@ async def redact_version(
                 field_ids=body.field_ids,
                 actor_id=subject.user_id,
                 at=now,
+                include_parties=body.include_parties,
+                include_patterns=body.include_patterns,
             )
         except RedactionUnavailable:
             await conn.rollback()

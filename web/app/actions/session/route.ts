@@ -20,6 +20,8 @@
  */
 import { cookies } from "next/headers";
 
+import { isCrossSite, refuse } from "../../lib/guard";
+
 const API_ORIGIN = process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000";
 const SESSION_COOKIE = "ordin_session";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,6 +50,7 @@ function safeReturn(value: FormDataEntryValue | null): string {
 }
 
 export async function POST(request: Request) {
+  if (isCrossSite(request)) return refuse();
   const form = await request.formData();
   const back = safeReturn(form.get("next"));
   const jar = await cookies();

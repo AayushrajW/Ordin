@@ -17,6 +17,8 @@
  */
 import { cookies } from "next/headers";
 
+import { isCrossSite, refuse } from "../../lib/guard";
+
 const API_ORIGIN = process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -36,6 +38,7 @@ function back(path: string, error?: string): Response {
 }
 
 export async function POST(request: Request) {
+  if (isCrossSite(request)) return refuse();
   const form = await request.formData();
   const target = safeReturn(form.get("next"));
   const token = (await cookies()).get("ordin_session")?.value;
@@ -70,7 +73,10 @@ export async function POST(request: Request) {
     const fieldIds = form.getAll("field_id").filter(
       (v): v is string => typeof v === "string" && UUID.test(v),
     );
-    if (typeof versionId !== "string" || !UUID.test(versionId) || fieldIds.length === 0) {
+    // No field ids means every identifying value on the version, plus the case's
+    // recorded parties and identifier patterns — the engine's default, and the one
+    // that also catches the mentions nobody labelled.
+    if (typeof versionId !== "string" || !UUID.test(versionId)) {
       return back(target, "input");
     }
     path = `/versions/${versionId}/redact`;
@@ -94,6 +100,7 @@ export async function POST(request: Request) {
   if (upstream.status === 401) return back(target, "session");
   if (upstream.status === 404) return back(target, "refused");
   if (upstream.status === 422) return back(target, "nothinglocated");
+  if (upstream.status === 429) return back(target, "rate");
   if (!upstream.ok) return back(target, "refused");
 
   if (intent === "redact") {
@@ -102,7 +109,7 @@ export async function POST(request: Request) {
     const made = (await upstream.json()) as { version_id?: string };
     if (made.version_id) {
       const base = target.split("?")[0];
-      return back(`${base}?version=${made.version_id}`);
+      return back(`${base}?version=${made.version_id}&redacted=1`);
     }
   }
   return back(target);

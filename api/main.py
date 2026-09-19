@@ -21,6 +21,7 @@ from api.documents import router as documents_router
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
 from api.sentinel_routes import router as sentinel_router
+from api.security import SecurityMiddleware
 from api.session import router as session_router
 from domain.policy import load_policy
 from infra.blobstore import LocalBlobStore
@@ -60,6 +61,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
     app.add_middleware(CorrelationIdMiddleware)
+    # Outermost of the two, so a refused request still carries the hardened headers
+    # and a correlation id is never allocated for traffic that was rate-limited.
+    app.add_middleware(SecurityMiddleware)
     app.state.settings = settings
     # Loaded once at startup, and deliberately NOT lazily per request: a malformed
     # policy must stop the process rather than deny every request at runtime while

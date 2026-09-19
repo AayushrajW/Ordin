@@ -69,6 +69,66 @@ export type ExtractedField = {
   model: string | null;
   verified_by: string | null;
   entered_by: string | null;
+  /** The OCR engine's own confidence in the words the value came from (lowest word). */
+  ocr_confidence: number | null;
+  anomalies: Anomaly[];
+};
+
+export type Anomaly = {
+  code: string;
+  severity: "warning" | "info";
+  message: string;
+  suggestion: string | null;
+};
+
+export type Integrity = {
+  state: "VERIFIED" | "MISMATCH" | "DISPOSED_ANCHOR_ONLY" | "PENDING" | "UNAVAILABLE";
+  detail: string;
+  sha256: string;
+  anchor_seq: number | null;
+  anchored_at: string | null;
+  checked_at: string;
+  anchor_store: string;
+  note: string;
+};
+
+export type Activity = {
+  seq: number;
+  action: string;
+  object_type: string;
+  at: string;
+  actor: string | null;
+  post: string | null;
+};
+
+export type PlanFinding = {
+  kind: string;
+  rule_id: string;
+  confidence: number;
+  source: string | null;
+  /** On a labelled field's own span, as opposed to elsewhere on the page. */
+  labelled: boolean;
+  boxes: { page_no: number; x0: number; y0: number; x1: number; y1: number }[];
+};
+
+export type RedactionPlan = {
+  page_width: number;
+  page_height: number;
+  unlocated: number;
+  findings: PlanFinding[];
+};
+
+export type CaseSummary = {
+  route: "designation" | "grant";
+  disclosure: "original" | "redacted" | "none";
+  purpose: string | null;
+  grant_expires_at: string | null;
+  clearance_valid_to: string | null;
+  sealed: boolean;
+  documents: number;
+  drafts_awaiting: number | null;
+  policy: string;
+  rule: string;
 };
 
 export type OcrText = {

@@ -90,7 +90,7 @@ async def run_sentinel(
     # requests into this same application, and holding one here while they compete
     # for a five-connection pool is a deadlock waiting for a demo.
 
-    transport = httpx.ASGITransport(app=request.app)
+    transport = httpx.ASGITransport(app=request.app, client=("sentinel.internal", 0))
     async with httpx.AsyncClient(transport=transport, base_url="http://sentinel") as client:
         results = await run_all(
             _Ctx(client=client, engine=engine, ids=ids, blobs=request.app.state.blobs)

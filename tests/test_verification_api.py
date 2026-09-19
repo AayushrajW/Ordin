@@ -571,8 +571,13 @@ async def test_redacting_nothing_locatable_is_refused_not_silently_empty(api):
         json={"field_key": "hand_entered", "value": "no span exists for this"},
     )
     assert entered.status_code == 201
+    # Parties and patterns off: with them on, the engine now finds the case's recorded
+    # complainant in the text on its own, which is the point of it — so "nothing
+    # locatable" has to be arranged explicitly rather than assumed.
     response = await client.post(
-        f"/versions/{ids['version']}/redact", json={"field_ids": [entered.json()["id"]]}
+        f"/versions/{ids['version']}/redact",
+        json={"field_ids": [entered.json()["id"]], "include_parties": False,
+              "include_patterns": False},
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "nothing_located_to_remove"
