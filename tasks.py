@@ -639,8 +639,46 @@ COMMANDS = {
     "verify-compose": cmd_verify_compose,
 }
 
+def _running_in_venv() -> bool:
+    try:
+        return Path(sys.executable).resolve() == VENV_PY.resolve()
+    except OSError:
+        return False
+
+
+def _hand_over_to_venv() -> None:
+    """Re-run this command under the project's own interpreter, if we are not in it.
+
+    The README says `python tasks.py up`, and on this machine `python` is 3.10 with none
+    of the project's packages — so every command that imports the application died with
+    `No module named 'pydantic'`. Subprocesses already used the venv; the runner itself
+    did not, and nobody noticed because it was only ever invoked as
+    `.venv\\Scripts\\python.exe tasks.py`, which is not what anyone else types.
+
+    Only when the venv exists — which is what lets `doctor` still answer on a bare
+    clone. `setup` is the one command that never hands over, because it is the one that
+    creates the venv.
+    """
+    if not VENV_PY.exists() or _running_in_venv() or os.environ.get("ORDIN_TASKS_IN_VENV"):
+        return
+    env = {**os.environ, "ORDIN_TASKS_IN_VENV": "1"}
+    child = subprocess.Popen([str(VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]],
+                             cwd=ROOT, env=env)
+    # Ctrl-C reaches the child too, and `up` shuts its processes down cleanly on it.
+    # Waiting again rather than killing lets that shutdown finish.
+    for _ in range(3):
+        try:
+            raise SystemExit(child.wait())
+        except KeyboardInterrupt:
+            continue
+    child.kill()
+    raise SystemExit(130)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         print(__doc__)
         raise SystemExit(2)
+    if sys.argv[1] != "setup":
+        _hand_over_to_venv()
     raise SystemExit(COMMANDS[sys.argv[1]]())
