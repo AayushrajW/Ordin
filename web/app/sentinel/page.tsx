@@ -89,8 +89,17 @@ export default async function SentinelPage() {
   const failing = results.filter((r) => r.outcome !== "pass");
   const critical = results.filter((r) => r.severity === "critical").length;
 
+  const briefing = !run || !run.ok
+    ? "Sentinel did not run. Choose a specimen identity first."
+    : failing.length === 0
+      ? `Sentinel. All ${run.data.total} security claims held against the running system, ` +
+        `including ${critical} critical scenarios. Nothing stored, nothing cached.`
+      : `Sentinel. ${failing.length} of ${run.data.total} claims are not holding: ` +
+        `${failing.map((f) => `${f.id}, ${f.severity}`).join("; ")}.`;
+
   return (
-    <Shell subject={subject} returnTo="/sentinel" active="sentinel">
+    <Shell subject={subject} returnTo="/sentinel" active="sentinel"
+           voice={{ briefing }}>
       <PageHeader
         eyebrow="Live security verification"
         title="Sentinel"

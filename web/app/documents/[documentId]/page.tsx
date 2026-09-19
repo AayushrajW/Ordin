@@ -367,8 +367,54 @@ export default async function DocumentPage({
   const pageW = plan?.page_width || spans?.page_width || 595;
   const pageH = plan?.page_height || spans?.page_height || 842;
 
+  // **Field names, flags and counts — never a value.** A voice assistant that reads a
+  // complainant's name into a room has disclosed it to everyone in that room, which no
+  // access decision on the screen ever authorised.
+  const flags = open
+    .flatMap((f) => f.anomalies.filter((a) => a.severity === "warning").map((a) => ({ f, a })))
+    .map(({ f, a }) => `${humanKey(f.field_key).toLowerCase()}: ${a.message}`);
+  const briefing = version.is_derivative
+    ? `${document.title}. Redacted derivative, version ${version.version_no}. Content removed ` +
+      `and the page rasterised; no text layer and no fields. Integrity: ${integrity?.state ?? "unknown"}.`
+    : mode === "redact"
+      ? `Redaction preview for ${document.title}. ${plan?.findings.length ?? 0} mentions, ` +
+        `${plan?.findings.reduce((n, f) => n + f.boxes.length, 0) ?? 0} regions. ` +
+        `${plan?.findings.filter((f) => !f.labelled).length ?? 0} of them are outside the ` +
+        "labelled fields. Nothing is removed until you press the button yourself."
+      : `${document.title}, version ${version.version_no}. Integrity: ${integrity?.state ?? "unknown"}. ` +
+        `${drafts} ${drafts === 1 ? "field" : "fields"} awaiting a human` +
+        (flagged ? `, ${flagged} flagged.` : ".") +
+        (flags.length ? ` First flag — ${flags[0]}` : "");
+
+  const index = selected ? open.findIndex((f) => f.id === selected.id) : -1;
+  const voiceCommands = [
+    { phrase: "read the flags", aliases: ["what is wrong", "read flags"],
+      say: flags.length ? flags.join(". ") : "Nothing is flagged on this version.",
+      label: "Read the flags" },
+    ...(original && !version.is_derivative
+      ? [
+          { phrase: "redact", aliases: ["show redaction", "redaction preview"],
+            href: `${base}&mode=redact`, label: "Redaction preview" },
+          { phrase: "review fields", aliases: ["review"], href: base, label: "Review fields" },
+        ]
+      : []),
+    ...(index >= 0 && index + 1 < open.length
+      ? [{ phrase: "next field", href: `${base}&field=${open[index + 1].id}`, label: "Next field" }]
+      : []),
+    ...(index > 0
+      ? [{ phrase: "previous field", href: `${base}&field=${open[index - 1].id}`, label: "Previous field" }]
+      : []),
+    ...versions.map((v) => ({
+      phrase: v.is_derivative ? "show the redacted version" : "show the original",
+      href: `/documents/${documentId}?version=${v.id}`,
+      label: v.is_derivative ? "Show redacted" : "Show original",
+    })),
+    { phrase: "back to the case", aliases: ["back to case"], href: "/", label: "Case files" },
+  ];
+
   return (
-    <Shell subject={subject} returnTo={here} active="cases">
+    <Shell subject={subject} returnTo={here} active="cases"
+           voice={{ briefing, commands: voiceCommands }}>
       <PageHeader
         crumbs={[{ label: "Case files", href: "/" }, { label: document.title }]}
         eyebrow={version.is_derivative ? "Redacted derivative" : "Original document"}

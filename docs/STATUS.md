@@ -40,7 +40,7 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**366 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+**374 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
 `tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
 back. Compose path verified at **226 MiB**.
 
@@ -89,6 +89,30 @@ a second one makes it `-qq`. Use `tasks.py test`.
   `FOR UPDATE SKIP LOCKED` and runs the thread (ADR 0019). The api keeps no OCR engine.
 - **`demo.py` / `tasks.py demo`** — one command from clean checkout to a case file.
 - ADRs 0014–0019. Module briefs 04b, 05b, 06b, 08. Migration 0008.
+
+## Intake: what the system accepts
+
+**PDFs and photographs.** PNG, JPEG, TIFF, GIF and BMP are accepted on their magic
+bytes and wrapped into a one-page document; the pixels are re-encoded, so EXIF — camera,
+owner, GPS — never reaches the store (ADR 0022). Anything else is refused on content,
+whatever it is named. Encrypted PDFs are refused rather than guessed at. Caps: 25 MB,
+200 pages, 80 megapixels.
+
+A photograph goes through the same path as everything else — sanitise, version, queue,
+OCR, extract, sign, anchor — and the worker picks it up within one tick, about ten
+seconds.
+
+## Voice assistant
+
+Reads the current screen aloud and takes a fixed set of spoken commands (ADR 0022).
+**It never speaks a name, number or address**, and it **cannot commit a value or burn a
+redaction** — a misheard word must not write evidence. Speech output is on-device;
+speech input uses the browser's recogniser, which streams audio to its vendor, so it is
+**off by default** behind a switch that says so.
+
+This machine has en-US and en-GB voices installed and no en-IN, so it speaks in en-GB.
+In an embedded preview pane with no voices at all, the panel reports that the engine did
+not start rather than appearing to work.
 
 ## Half-done, and exactly where
 

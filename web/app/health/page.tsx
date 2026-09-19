@@ -37,8 +37,13 @@ export default async function HealthPage() {
   const [report, subject] = await Promise.all([fetchHealth(), currentSubject()]);
   const healthy = report?.status === "healthy";
 
+  const briefing = report === null
+    ? "System health. The API is unreachable."
+    : `System health. ${healthy ? "All dependencies healthy" : "Degraded"}. ` +
+      report.checks.map((c) => `${c.name} is ${c.status}`).join(", ") + ".";
+
   return (
-    <Shell subject={subject} returnTo="/health" active="health">
+    <Shell subject={subject} returnTo="/health" active="health" voice={{ briefing }}>
       <PageHeader eyebrow="Operations" title="System health"
                   meta="Four containers on one machine, no network egress. This page renders health only and enforces nothing." />
       <div className="mx-auto max-w-3xl space-y-6 px-6 py-8 lg:px-10">

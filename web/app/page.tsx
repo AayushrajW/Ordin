@@ -153,8 +153,30 @@ export default async function Home() {
   const drafts = summaries.reduce((n, s) => n + (s?.drafts_awaiting ?? 0), 0);
   const originalReader = summaries.some((s) => s?.disclosure === "original");
 
+  // Counts and names of things, never the contents of a case.
+  const briefing =
+    `Case files. ${counted?.count ?? cases.length} ` +
+    `${(counted?.count ?? cases.length) === 1 ? "case is" : "cases are"} within reach of ` +
+    `${subject.display_name}, ${subject.title}. ${documents} documents. ` +
+    (originalReader
+      ? `${drafts} fields awaiting a human.`
+      : "You receive redacted derivatives only.");
+
   return (
-    <Shell subject={subject} returnTo="/" active="cases">
+    <Shell
+      subject={subject}
+      returnTo="/"
+      active="cases"
+      voice={{
+        briefing,
+        commands: cases.slice(0, 3).map((c, i) => ({
+          phrase: i === 0 ? "open the case" : `open case ${i + 1}`,
+          aliases: i === 0 ? ["open first case"] : [],
+          href: `/cases/${c.id}`,
+          label: `Open ${c.reference}`,
+        })),
+      }}
+    >
       <PageHeader
         eyebrow={`Signed in as ${subject.title}`}
         title="Case files"

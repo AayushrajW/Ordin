@@ -13,6 +13,7 @@
  * meaning nothing (threat EXT-02).
  */
 import { get, type DemoSubject, type Subject } from "../lib/api";
+import VoiceAssistant, { type VoiceCommand } from "./VoiceAssistant";
 import {
   IconCases,
   IconChevron,
@@ -69,11 +70,14 @@ export default async function Shell({
   subject,
   returnTo,
   active,
+  voice,
   children,
 }: {
   subject: Subject | null;
   returnTo: string;
   active: Nav;
+  /** What the assistant reads for this screen, and what it accepts beyond navigation. */
+  voice?: { briefing: string; commands?: VoiceCommand[] };
   children: React.ReactNode;
 }) {
   const directory = await get<{ subjects: DemoSubject[] }>("/demo/subjects");
@@ -191,6 +195,20 @@ export default async function Shell({
       <main className="min-w-0">
         <div className="grain min-h-screen">{children}</div>
       </main>
+
+      <VoiceAssistant
+        briefing={
+          voice?.briefing ??
+          `Ordin, signed in as ${subject?.display_name ?? "nobody"}. Nothing selected.`
+        }
+        commands={[
+          ...(voice?.commands ?? []),
+          { phrase: "case files", aliases: ["go to cases", "open cases"], href: "/", label: "Case files" },
+          { phrase: "sentinel", aliases: ["security", "run sentinel"], href: "/sentinel", label: "Sentinel" },
+          { phrase: "system health", aliases: ["health"], href: "/health", label: "System health" },
+          { phrase: "stop", aliases: ["quiet", "be quiet"], cancel: true, label: "Stop speaking" },
+        ]}
+      />
     </div>
   );
 }

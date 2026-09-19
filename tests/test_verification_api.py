@@ -696,16 +696,39 @@ async def test_uploading_the_same_file_twice_yields_one_version(api):
     )
 
 
-async def test_a_non_pdf_upload_is_refused_by_content(api):
+async def test_an_upload_that_is_neither_document_nor_image_is_refused_by_content(api):
     client, ids, _ = api
     await sign_in(client, ids["officer"])
     response = await client.post(
         f"/cases/{ids['case']}/documents?filename=looks_like.pdf",
-        content=b"GIF89a" + b"\x00" * 64,
+        content=b"PK\x03\x04" + b"\x00" * 64,
         headers={"content-type": "application/pdf"},
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "content_is_not_pdf"
+
+
+async def test_a_photograph_can_be_filed_like_any_other_document(api):
+    """Documents arrive as phone photos at least as often as they arrive as PDFs."""
+    import fitz
+
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 96), "SPECIMEN - NOT A REAL RECORD", fontsize=12)
+    page.insert_text((72, 130), "Witness Name: Prakash Iyer", fontsize=13)
+    photo = page.get_pixmap(dpi=150).tobytes("png")
+    doc.close()
+
+    response = await client.post(
+        f"/cases/{ids['case']}/documents?filename=photo.png",
+        content=photo,
+        headers={"content-type": "image/png"},
+    )
+    assert response.status_code == 202, response.text
+    stored = client._transport.app.state.blobs.get(response.json()["sha256"])
+    assert stored[:5] == b"%PDF-", "the photograph was not turned into a document"
 
 
 async def test_a_grantee_cannot_upload(api):

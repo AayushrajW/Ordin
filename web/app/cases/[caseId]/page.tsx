@@ -25,7 +25,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const UPLOAD_ERRORS: Record<string, string> = {
-  notpdf: "That file is not a PDF. The content decides, not the extension.",
+  notpdf: "That file is neither a PDF nor an image. The content decides, not the extension.",
   toolarge: "That file is over the size limit and was not read.",
   encrypted: "That PDF is encrypted. It is refused rather than guessed at.",
   unreadable: "That PDF could not be parsed and was refused.",
@@ -76,8 +76,30 @@ export default async function CasePage({
 
   const original = summary?.disclosure === "original";
 
+  const briefing =
+    `Case ${record.reference.replace(/[/-]/g, " ")}. Stage: ${stateLabel(record.state)}. ` +
+    (summary?.route === "designation"
+      ? "You are designated on this case and receive original documents. "
+      : `You hold a purpose-limited grant${summary?.purpose ? ` for ${summary.purpose}` : ""}, ` +
+        "and receive redacted derivatives only. ") +
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}` +
+    (summary?.drafts_awaiting ? `, ${summary.drafts_awaiting} fields awaiting a human.` : ".") +
+    (record.access_class === "sealed" ? " This case is sealed." : "");
+
   return (
-    <Shell subject={subject} returnTo={`/cases/${caseId}`} active="cases">
+    <Shell
+      subject={subject}
+      returnTo={`/cases/${caseId}`}
+      active="cases"
+      voice={{
+        briefing,
+        commands: documents.slice(0, 3).map((d, i) => ({
+          phrase: i === 0 ? "open the document" : `open document ${i + 1}`,
+          href: `/documents/${d.id}`,
+          label: `Open ${d.title}`,
+        })),
+      }}
+    >
       <PageHeader
         crumbs={[{ label: "Case files", href: "/" }, { label: record.reference }]}
         eyebrow={stateLabel(record.state)}
@@ -145,15 +167,17 @@ export default async function CasePage({
                   <IconUpload className="h-5 w-5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[0.875rem] font-semibold text-ink-900">File a document into this case</p>
+                  <p className="text-[0.875rem] font-semibold text-ink-900">File a document or a photograph</p>
                   <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-ink-500">
-                    Sniffed by content, size-capped, and rebuilt without JavaScript, launch
-                    actions, embedded files or form actions before anything is stored. The
-                    worker then runs OCR, extraction, signing and anchoring.
+                    PDF, or a photograph of a page — JPEG, PNG or TIFF. The type is decided
+                    by the content, never the extension. Documents are rebuilt without
+                    JavaScript, launch actions or embedded files; photographs are re-encoded,
+                    which leaves their EXIF — including GPS coordinates — behind. The worker
+                    then runs OCR, extraction, signing and anchoring.
                   </p>
                 </div>
                 <label className="btn-quiet cursor-pointer">
-                  <input type="file" name="file" accept="application/pdf" required className="max-w-[12rem] text-xs file:hidden" />
+                  <input type="file" name="file" accept="application/pdf,image/png,image/jpeg,image/tiff,image/bmp" required className="max-w-[12rem] text-xs file:hidden" />
                 </label>
                 <button type="submit" className="btn-primary">
                   <IconUpload className="h-4 w-4" /> Upload

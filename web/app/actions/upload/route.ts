@@ -21,6 +21,7 @@ const MAX_BYTES = 25 * 1024 * 1024;
 
 const CODES: Record<string, string> = {
   content_is_not_pdf: "notpdf",
+  exceeds_pixel_limit: "toolarge",
   exceeds_size_limit: "toolarge",
   exceeds_page_limit: "toolarge",
   encrypted_pdf: "encrypted",

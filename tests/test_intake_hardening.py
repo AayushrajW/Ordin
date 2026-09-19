@@ -182,10 +182,20 @@ def test_sanitising_an_already_sanitised_file_is_clean_but_not_byte_identical():
 # --- refusals -----------------------------------------------------------------
 
 
-def test_a_non_pdf_is_refused_by_content_not_by_name():
+def test_a_file_that_is_neither_document_nor_image_is_refused_by_content():
+    """A zip, an executable, a spreadsheet: refused on its bytes, whatever it is named."""
+    for header, label in ((b"PK\x03\x04", "zip"), (b"MZ\x90\x00", "exe"),
+                          (b"hello, this is just text", "text")):
+        with pytest.raises(UploadRejected) as raised:
+            sanitise(header + b"\x00" * 2048)
+        assert raised.value.code is RejectionCode.NOT_A_PDF, label
+
+
+def test_a_corrupt_image_is_refused_rather_than_half_decoded():
+    """Recognised by its header, unreadable in fact. Refusing beats storing a smear."""
     with pytest.raises(UploadRejected) as raised:
         sanitise(b"GIF89a" + b"\x00" * 2048)
-    assert raised.value.code is RejectionCode.NOT_A_PDF
+    assert raised.value.code is RejectionCode.UNREADABLE
 
 
 def test_an_empty_upload_is_refused():
@@ -237,3 +247,87 @@ def test_every_fixture_document_passes_intake_unchanged_in_substance():
         assert isinstance(result, Intake)
         assert result.removed == [], f"{pdf.name} carried {result.removed}"
         assert result.pages >= 1
+
+
+# --- photographs ---------------------------------------------------------------
+
+
+def _page_image(text: str = "Complainant Name: Test Person", fmt: str = "png") -> bytes:
+    """A picture of a document page, the way one arrives from a phone or a scanner."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 96), "SPECIMEN - NOT A REAL RECORD", fontsize=12)
+    page.insert_text((72, 130), text, fontsize=13)
+    data = page.get_pixmap(dpi=200).tobytes(fmt)
+    doc.close()
+    return data
+
+
+def _with_exif(jpeg: bytes, marker: bytes) -> bytes:
+    """Splice an APP1 EXIF segment carrying `marker` in after the JPEG's SOI."""
+    payload = b"Exif\x00\x00" + marker
+    segment = b"\xff\xe1" + (len(payload) + 2).to_bytes(2, "big") + payload
+    return jpeg[:2] + segment + jpeg[2:]
+
+
+def test_a_photograph_is_accepted_and_becomes_a_document():
+    result = sanitise(_page_image())
+    assert result.pages == 1
+    assert result.data[:5] == b"%PDF-", "an image upload did not become a PDF"
+    assert active_constructs(result.data) == []
+
+
+def test_every_image_format_the_sniffer_claims_is_actually_accepted():
+    for fmt in ("png", "jpg"):
+        assert sanitise(_page_image(fmt=fmt)).pages == 1, fmt
+
+
+def test_the_type_comes_from_the_content_not_the_extension():
+    """A file named .pdf that is a PNG is a PNG, and vice versa. Neither is refused for
+    its name, and neither is trusted for it."""
+    from infra.intake import sniff
+
+    assert sniff(_page_image()) == "png"
+    assert sniff(b"%PDF-1.7\n%%EOF\n") == "pdf"
+
+
+def test_a_photograph_s_exif_never_reaches_the_evidence_store():
+    """A phone photo of a complaint carries GPS coordinates — the place it was taken.
+
+    Embedding the original JPEG would carry them inside the image stream, where nothing
+    downstream would look. The pixels are decoded and re-encoded instead.
+    """
+    marker = b"GPS-COORDINATES-OF-A-VICTIMS-HOME"
+    hostile = _with_exif(_page_image(fmt="jpg"), marker)
+    assert marker in hostile, "the specimen carries no EXIF, so this would prove nothing"
+
+    result = sanitise(hostile)
+    assert marker not in result.data, "EXIF survived into the stored document"
+
+
+def test_an_enormous_image_is_refused_before_it_is_rasterised():
+    from infra.intake import MAX_PIXELS, pdf_from_image
+
+    doc = fitz.open()
+    # A page whose pixmap would exceed the cap, rendered small and claimed large.
+    page = doc.new_page(width=2000, height=2000)
+    page.insert_text((10, 20), "x")
+    huge = page.get_pixmap(dpi=340).tobytes("png")
+    doc.close()
+    pixels = fitz.Pixmap(huge)
+    if pixels.width * pixels.height <= MAX_PIXELS:
+        pytest.skip("could not build an image over the pixel cap cheaply")
+    with pytest.raises(UploadRejected) as raised:
+        pdf_from_image(huge)
+    assert raised.value.code is RejectionCode.TOO_MANY_PIXELS
+
+
+def test_a_photograph_survives_the_sanitiser_intact_enough_to_read():
+    """The point of accepting photographs is that OCR can still read them afterwards."""
+    from infra.textsource import TesseractOcr
+
+    if not TesseractOcr.available():
+        pytest.skip("tesseract not installed")
+    result = sanitise(_page_image("Complainant Name: Rukmini Deshmukh"))
+    outcome = TesseractOcr(languages="eng").extract(result.data)
+    assert "Rukmini" in outcome.text, outcome.text[:200]

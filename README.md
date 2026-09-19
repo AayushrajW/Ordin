@@ -53,11 +53,13 @@ something you watch pass rather than something we assert.
 | Golden thread | upload → OCR → extract → sign → anchor, idempotent |
 | Redaction | destructive, rasterised, with the derived text closed off too |
 | Verification UI | draft fields beside the scan; the human commit that writes `verified` |
+| Intake | PDFs **and photographs** — re-encoded, so EXIF and GPS never reach the store |
+| Voice | reads a screen aloud; never speaks a name; cannot commit or redact |
 | Sentinel | 15 scenarios, rendered on a page and re-run live on every load |
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-363 tests. `python tasks.py test`.
+374 tests. `python tasks.py test`.
 
 ---
 

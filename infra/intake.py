@@ -90,6 +90,7 @@ class RejectionCode(StrEnum):
     NOT_A_PDF = "content_is_not_pdf"
     UNREADABLE = "pdf_could_not_be_parsed"
     TOO_MANY_PAGES = "exceeds_page_limit"
+    TOO_MANY_PIXELS = "exceeds_pixel_limit"
     ENCRYPTED = "encrypted_pdf"
     SANITISATION_FAILED = "active_content_survived_sanitisation"
 
@@ -120,16 +121,84 @@ class Intake:
         return self.sha256 != self.original_sha256
 
 
-def sniff(data: bytes) -> None:
-    """Decide the type from the content. Raises rather than returning a guess."""
+# Photographs are how documents actually arrive. Matched on content, never on the
+# name or the browser's content-type, exactly as PDFs are.
+IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"II*\x00", "tiff"),
+    (b"MM\x00*", "tiff"),
+    (b"BM", "bmp"),
+)
+
+# A 12-megapixel phone photo is ~12M; this stops a small file that decompresses into
+# gigabytes of pixmap from being rasterised at all (the image equivalent of a zip bomb).
+MAX_PIXELS = 80_000_000
+
+# The page is sized so one image pixel is one pixel at the OCR path's raster density.
+# Fitting a photograph to A4 instead would throw away half the detail OCR needs.
+IMAGE_PAGE_DPI = 200
+
+
+def sniff(data: bytes) -> str:
+    """Decide the type from the content. Returns "pdf" or an image kind; never guesses."""
     if not data:
         raise UploadRejected(RejectionCode.EMPTY)
     if len(data) > MAX_BYTES:
         raise UploadRejected(RejectionCode.TOO_LARGE)
     # The header is permitted a small offset: some generators emit a few junk bytes
-    # first and every reader tolerates it. Beyond that it is not a PDF.
-    if PDF_MAGIC not in data[:1024]:
-        raise UploadRejected(RejectionCode.NOT_A_PDF)
+    # first and every reader tolerates it.
+    if PDF_MAGIC in data[:1024]:
+        return "pdf"
+    for magic, kind in IMAGE_MAGIC:
+        if data.startswith(magic):
+            return kind
+    raise UploadRejected(RejectionCode.NOT_A_PDF)
+
+
+def pdf_from_image(data: bytes) -> bytes:
+    """Wrap a photograph in a PDF page, re-encoding the pixels.
+
+    **The pixels are decoded and re-encoded, never embedded as they arrived.** A photo
+    taken on a phone carries EXIF: the camera, the owner's name on some devices, and
+    GPS coordinates — which for a photographed complaint is the location of the place
+    it was photographed, often a police station or a victim's home. Embedding the
+    original JPEG would carry all of it into the evidence store inside the image
+    stream, where nothing downstream would ever look. Decoding to a pixmap and writing
+    PNG drops every marker segment; only the picture survives.
+
+    The rest of the system then treats it as any other document: sanitised, versioned,
+    OCR'd over the rendered page, extracted, redacted. Nothing downstream needs to know
+    it began as a photograph.
+    """
+    import fitz
+
+    try:
+        pixmap = fitz.Pixmap(data)
+    except Exception as exc:  # noqa: BLE001
+        raise UploadRejected(RejectionCode.UNREADABLE) from exc
+
+    try:
+        if pixmap.width * pixmap.height > MAX_PIXELS:
+            raise UploadRejected(RejectionCode.TOO_MANY_PIXELS)
+        if pixmap.alpha:
+            # Flatten: a transparent region in evidence is a hole nobody can read, and
+            # PDF viewers disagree about what shows through it.
+            pixmap = fitz.Pixmap(pixmap, 0)
+        clean = pixmap.tobytes("png")
+
+        scale = 72.0 / IMAGE_PAGE_DPI
+        width, height = pixmap.width * scale, pixmap.height * scale
+        document = fitz.open()
+        page = document.new_page(width=width, height=height)
+        page.insert_image(fitz.Rect(0, 0, width, height), stream=clean)
+        wrapped = document.tobytes(garbage=4, deflate=True)
+        document.close()
+        return wrapped
+    finally:
+        pixmap = None
 
 
 def active_constructs(data: bytes) -> list[str]:
@@ -198,8 +267,13 @@ def sanitise(data: bytes) -> Intake:
     """Sniff, strip, rebuild, and re-check. Fails closed at every step."""
     import fitz
 
-    sniff(data)
+    kind = sniff(data)
     original_sha256 = sha256_bytes(data)
+    if kind != "pdf":
+        # A photograph becomes a one-page document before anything else looks at it,
+        # with its EXIF left behind. `original_sha256` stays the digest of what
+        # actually arrived, which is what migration 0008 records.
+        data = pdf_from_image(data)
 
     try:
         doc = fitz.open(stream=data, filetype="pdf")
