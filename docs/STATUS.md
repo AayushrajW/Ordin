@@ -40,7 +40,7 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**363 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+**366 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
 `tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
 back. Compose path verified at **226 MiB**.
 
@@ -126,6 +126,50 @@ worker gained real work; it was 206 MiB when the worker only beat).
 
 All three compound accepted risk AR-6: redaction targeting depends on locating a value
 in OCR text, so it is least reliable exactly where the documents are worst.
+
+## Rehearsal record, 2026-09-20
+
+Run twice, end to end, **using `python tasks.py …` exactly as the README says** — which
+is what found the first fault, because every previous run had used
+`.venv\Scripts\python.exe tasks.py` instead.
+
+| step | result |
+|---|---|
+| `python tasks.py demo` | 5 documents, 16-region derivative, 18 drafts, **18s** |
+| `python tasks.py up` | api + worker + web ready in **4s** |
+| Officer: dashboard → case → workbench | flags the two real OCR misreads |
+| Commit a suggested correction | human value verified; machine reading kept, superseded |
+| Redaction preview → burn | 8 mentions / 16 regions; 5 outside the labelled lines |
+| Grantee: same URL | redacted derivative only; no original, no custody trail |
+| Lapsed clearance: same URL | "Not available", identical to a case that does not exist |
+| Sentinel, browser and CLI | **19/19** |
+
+**Rehearsal 1 found four faults; all are fixed and committed.**
+
+1. **`python tasks.py` was broken for anyone but me.** The runner imported the
+   application in whatever interpreter started it, and `python` on this machine is 3.10
+   with none of the project's packages. It now hands over to the venv.
+2. **A corrected draft stayed flagged.** After a person committed a suggested value, the
+   machine's wrong reading was still counted as awaiting review — the screen asking them
+   to resolve what they had just resolved. It is kept as evidence, marked superseded.
+3. **Redacted derivatives were never anchored.** The worker's queue skips derivatives and
+   nothing else wrote one, so the copy a grantee receives reported PENDING for ever.
+   Anchored at birth now.
+4. **The handover guard leaked through the environment**, so the test suite could not
+   exercise it. The guard is the interpreter path, which cannot be inherited.
+
+And two things that hid faults rather than being faults:
+
+- **`tasks.py test` hid the names of failing tests.** `-r` replaces pytest's default
+  report characters rather than adding to them, so `-rs` listed skips and dropped
+  failures: a run could end "1 failed, 365 passed" and name nothing. Now `-rfEs`.
+- **uvicorn's reloader on Windows kept the old process serving** after logging a reload,
+  so an API change appeared not to take effect. Restart `tasks.py up` when in doubt.
+
+**Known cosmetic noise:** inside an embedded browser pane, Next's hot-reload WebSocket
+cannot connect and logs console errors. It is development-only — `next start`, the demo
+path, has no such socket — and it is not the Content-Security-Policy, which was
+widened for it and made no difference.
 
 ## Environment — verified, do not re-derive
 
@@ -264,6 +308,7 @@ disclosure).
 
 ## Next concrete action
 
-**Rehearse, then stop building.** `python tasks.py demo && python tasks.py up`, then walk
-the five-step demo above twice without notes. The build is complete; the remaining risk
-is entirely in presenting it.
+**Rehearse the narration, not the software.** The build is complete and rehearsed twice
+end to end. What is unrehearsed is a person talking over it: `python tasks.py demo`,
+`python tasks.py up`, then walk the eight steps in the rehearsal record above without
+notes.

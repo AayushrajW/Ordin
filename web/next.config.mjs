@@ -54,7 +54,14 @@ const nextConfig = {
               `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data:",
-              `connect-src 'self' ${process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000"}`,
+              // The dev server's hot-reload socket needs `ws:` named explicitly; without
+              // it the connection is refused and live reload silently stops working
+              // while the console fills with failures. `next start` has no such socket,
+              // so the demo path keeps the tighter policy.
+              `connect-src 'self' ${process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000"}` +
+                (process.env.NODE_ENV === "development"
+                  ? " ws://127.0.0.1:* ws://localhost:*"
+                  : ""),
               "font-src 'self'",
               "frame-ancestors 'none'",
             ].join("; "),
