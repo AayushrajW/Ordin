@@ -163,7 +163,10 @@ def cmd_doctor() -> int:
     print("ordin doctor")
     problems = 0
 
-    print(f"  python           : {sys.version.split()[0]}  ({PY})")
+    # The interpreter actually running this, not the one subprocesses will use. They
+    # are the same after the handover; printing PY here reported 3.10 beside the venv
+    # path when they were not.
+    print(f"  python           : {sys.version.split()[0]}  ({sys.executable})")
     if not sys.version.startswith("3.11"):
         print("    ! expected 3.11 to match the api container")
         problems += 1
@@ -618,7 +621,10 @@ def cmd_test() -> int:
         print("    refusing to run the suite against a database this checkout did "
               "not migrate")
         return 2
-    result = run([PY, "-m", "pytest", "-rs"], check=False)
+    # -rfEs, not -rs. `-r` replaces pytest's default report characters rather than
+    # adding to them, so `-rs` listed skips and silently dropped the names of failing
+    # tests — a run could end "1 failed, 365 passed" with no way to tell which.
+    result = run([PY, "-m", "pytest", "-rfEs"], check=False)
     return result.returncode
 
 
@@ -659,11 +665,15 @@ def _hand_over_to_venv() -> None:
     clone. `setup` is the one command that never hands over, because it is the one that
     creates the venv.
     """
-    if not VENV_PY.exists() or _running_in_venv() or os.environ.get("ORDIN_TASKS_IN_VENV"):
+    # The guard is the interpreter path itself, never an environment variable. A
+    # marker in the environment is inherited by every descendant, so anything this
+    # runner starts that calls the runner again - the test suite does exactly that -
+    # would silently skip the handover and fail with the error this exists to prevent.
+    # Comparing paths cannot leak: the child IS the venv interpreter, so it stops.
+    if not VENV_PY.exists() or _running_in_venv():
         return
-    env = {**os.environ, "ORDIN_TASKS_IN_VENV": "1"}
     child = subprocess.Popen([str(VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]],
-                             cwd=ROOT, env=env)
+                             cwd=ROOT)
     # Ctrl-C reaches the child too, and `up` shuts its processes down cleanly on it.
     # Waiting again rather than killing lets that shutdown finish.
     for _ in range(3):

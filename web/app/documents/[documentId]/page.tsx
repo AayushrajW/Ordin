@@ -139,6 +139,17 @@ function FieldCard({
   const warnings = f.anomalies.filter((a) => a.severity === "warning");
   const infos = f.anomalies.filter((a) => a.severity === "info");
   const verified = f.status === "verified";
+  if (f.superseded) {
+    // Kept, not deleted: the machine's reading is the evidence the extractor erred.
+    return (
+      <li className="rounded-xl border border-dashed border-paper-300 bg-paper-50/70 px-4 py-2.5">
+        <p className="flex items-center justify-between gap-3 text-[0.6875rem] text-ink-400">
+          <span>Machine read <span className="mono text-ink-500 line-through decoration-ink-300">{f.value}</span></span>
+          <span className="shrink-0">superseded by a person</span>
+        </p>
+      </li>
+    );
+  }
   return (
     <li className={`surface overflow-hidden transition ${selected ? "border-brass-300 shadow-lift ring-1 ring-brass-300/60" : "hover:border-ink-200"}`}>
       <a href={href} className="block px-4 pb-3 pt-3.5">
@@ -339,17 +350,20 @@ export default async function DocumentPage({
   const plan = mode === "redact" ? await get<RedactionPlan>(`/versions/${version.id}/redaction-plan`) : null;
 
   const selected =
-    fields.find((f) => f.id === selectedId) ??
-    fields.find((f) => f.status === "draft" && f.anomalies.length) ??
-    fields.find((f) => f.status === "draft") ??
+    // A superseded draft is never the working selection: after a commit, the screen
+    // moves on to the next field still waiting for someone.
+    fields.find((f) => f.id === selectedId && !f.superseded) ??
+    fields.find((f) => f.status === "draft" && !f.superseded && f.anomalies.length) ??
+    fields.find((f) => f.status === "draft" && !f.superseded) ??
     fields[0] ??
     null;
   const spans = mode === "review" && selected ? await get<SpanBoxes>(`/fields/${selected.id}/spans`) : null;
 
   const base = `/documents/${documentId}?version=${version.id}`;
   const here = `${base}${mode === "redact" ? "&mode=redact" : ""}${selected ? `&field=${selected.id}` : ""}`;
-  const drafts = fields.filter((f) => f.status === "draft").length;
-  const flagged = fields.filter((f) => f.status === "draft" && f.anomalies.some((a) => a.severity === "warning")).length;
+  const open = fields.filter((f) => f.status === "draft" && !f.superseded);
+  const drafts = open.length;
+  const flagged = open.filter((f) => f.anomalies.some((a) => a.severity === "warning")).length;
   const pageW = plan?.page_width || spans?.page_width || 595;
   const pageH = plan?.page_height || spans?.page_height || 842;
 
@@ -534,7 +548,11 @@ export default async function DocumentPage({
             <div className="surface px-4 py-4">
               <p className="eyebrow">Text source</p>
               <p className="mt-1.5 text-[0.8125rem] font-semibold text-ink-900">
-                {ocr?.method === "tesseract_ocr" ? "Tesseract OCR over the rendered page" : ocr?.method ?? "Not processed"}
+                {version.is_derivative
+                  ? "None — a rasterised derivative has no text layer"
+                  : ocr?.method === "tesseract_ocr"
+                    ? "Tesseract OCR over the rendered page"
+                    : ocr?.method ?? "Queued for the worker"}
               </p>
               {ocr?.mean_confidence != null && <div className="mt-2"><Confidence value={ocr.mean_confidence} label="Mean" /></div>}
               <p className="mt-2 text-[0.6875rem] leading-relaxed text-ink-400">

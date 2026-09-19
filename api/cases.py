@@ -254,8 +254,13 @@ async def case_summary(
             drafts = (
                 await conn.execute(
                     sa.text(
-                        "SELECT count(*) FROM extracted_field "
-                        "WHERE case_id = :c AND status = 'draft'"
+                        "SELECT count(*) FROM extracted_field f "
+                        "WHERE f.case_id = :c AND f.status = 'draft' "
+                        # A draft a person has already answered with their own value
+                        # is not awaiting anyone.
+                        "  AND NOT EXISTS (SELECT 1 FROM extracted_field h "
+                        "    WHERE h.version_id = f.version_id "
+                        "      AND h.field_key = f.field_key AND h.source = 'human')"
                     ),
                     {"c": case_id},
                 )

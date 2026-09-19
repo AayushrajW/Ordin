@@ -273,6 +273,19 @@ async def create_redacted_version(
              "r": record["rule_id"], "h": record["removed_hash"]},
         )
 
+    # Anchored at birth. Found in rehearsal: derivatives were created and never
+    # anchored — the worker's queue skips them, and nothing else wrote one — so the
+    # version handed to a purpose-limited grantee, the one most likely to be
+    # challenged, reported PENDING forever. Its integrity must be as checkable as the
+    # original's.
+    from infra.anchor import LocalAnchorStore
+
+    await LocalAnchorStore().anchor(
+        conn, case_id=case_id, document_id=str(parent["document_id"]),
+        version_id=str(derivative_id), content_sha256=derivative_sha,
+        actor_id=actor_id, at=at,
+    )
+
     await append_audit(
         conn,
         case_id=case_id,

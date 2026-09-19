@@ -431,6 +431,31 @@ async def test_a_correction_records_a_human_field_and_leaves_the_machine_one_alo
     assert machine["source"] == "regex"
 
 
+async def test_a_corrected_draft_is_superseded_not_left_awaiting_review(api):
+    """Found in rehearsal: after a person committed the right value, the machine's wrong
+    draft still showed as flagged and was still counted as awaiting review — asking a
+    human to resolve something they had just resolved. It is kept (it is the evidence
+    the extractor erred) and it is no longer open."""
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    field = await first_draft_field(client, ids["version"])
+    before = (await client.get(f"/cases/{ids['case']}/summary")).json()["drafts_awaiting"]
+
+    response = await client.post(
+        f"/versions/{ids['version']}/fields",
+        json={"field_key": field["field_key"], "value": "Corrected By Hand"},
+    )
+    assert response.status_code == 201
+
+    fields = (await client.get(f"/versions/{ids['version']}/fields")).json()
+    machine = next(f for f in fields if f["id"] == field["id"])
+    assert machine["superseded"] is True
+    assert machine["anomalies"] == []
+    assert machine["value"] == field["value"], "the machine's reading must be kept"
+    after = (await client.get(f"/cases/{ids['case']}/summary")).json()["drafts_awaiting"]
+    assert after == before - 1
+
+
 async def test_manual_entry_needs_no_machine_field_to_exist(api):
     """The manual path is complete, not degraded (CLAUDE.md, reliability invariants).
 
@@ -795,3 +820,15 @@ async def test_a_forged_session_cookie_is_refused(api):
     client, ids, _ = api
     client.cookies.set(COOKIE_NAME, f"{ids['officer']}.notasignature")
     assert (await client.get(f"/versions/{ids['version']}/fields")).status_code == 401
+
+
+async def test_a_redacted_derivative_is_anchored_at_birth(api):
+    """Found in rehearsal: derivatives reported PENDING forever, because nothing
+    anchored them. The version a grantee receives must verify like any other."""
+    client, ids, _ = api
+    await sign_in(client, ids["officer"])
+    made = await client.post(f"/versions/{ids['version']}/redact", json={})
+    assert made.status_code == 201, made.text
+    verdict = (await client.get(f"/versions/{made.json()['version_id']}/integrity")).json()
+    assert verdict["state"] == "VERIFIED", verdict
+    assert verdict["anchor_seq"] is not None

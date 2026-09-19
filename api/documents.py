@@ -80,6 +80,10 @@ class FieldOut(BaseModel):
     # lowest of them. `confidence` above is the pattern's, which is always 1.0 for a
     # deterministic match and says nothing about whether the text was read correctly.
     ocr_confidence: float | None = None
+    # A machine draft for which a person has since recorded a value under the same
+    # key. It is kept - it is the record of what the extractor read - but it is no
+    # longer awaiting anyone, and must not be counted or flagged as though it were.
+    superseded: bool = False
     anomalies: list["AnomalyOut"] = []
 
 
@@ -376,11 +380,13 @@ async def version_fields(
         scores = [w["confidence"] for w in words if w["char_start"] < end and w["char_end"] > start]
         return min(scores) if scores else None
 
+    human_keys = {r["field_key"] for r in rows if r["source"] == "human"}
     out: list[FieldOut] = []
     for r in rows:
+        superseded = r["source"] != "human" and r["field_key"] in human_keys
         ocr_confidence = lowest(r["source_span_start"], r["source_span_end"])
         anomalies = []
-        if r["status"] == "draft" and r["source"] != "human":
+        if r["status"] == "draft" and r["source"] != "human" and not superseded:
             anomalies = [
                 AnomalyOut(code=a.code, severity=a.severity.value, message=a.message,
                            suggestion=a.suggestion)
@@ -403,6 +409,7 @@ async def version_fields(
             entered_by=str(r["entered_by"]) if r["entered_by"] else None,
             ocr_confidence=ocr_confidence,
             anomalies=anomalies,
+            superseded=superseded,
         ))
     return out
 

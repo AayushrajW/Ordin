@@ -72,6 +72,8 @@ export type ExtractedField = {
   /** The OCR engine's own confidence in the words the value came from (lowest word). */
   ocr_confidence: number | null;
   anomalies: Anomaly[];
+  /** A machine draft a person has since answered with their own value. */
+  superseded: boolean;
 };
 
 export type Anomaly = {
