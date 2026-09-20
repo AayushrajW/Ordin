@@ -111,7 +111,7 @@ it makes them:
 - **Redaction removes what it was told to remove.** Region selection is patterns over
   OCR text plus a human; there is no entity recognition and no LLM, so a handwritten
   name or a photographed ID card is never located. OCR bounds it further: character
-  error rate is **2.2% on clean renders and 27.3% on degraded scans**, and **23.5% on
+  error rate is **2.1% on clean renders and 28.7% on degraded scans**, and **23.1% on
   Hindi**. Redaction is least reliable exactly where the documents are worst — which
   is why it now finds every mention of a known value, including OCR-mangled ones,
   rather than only the labelled line.

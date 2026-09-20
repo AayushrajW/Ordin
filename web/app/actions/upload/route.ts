@@ -18,6 +18,9 @@ import { isCrossSite, refuse } from "../../lib/guard";
 const API_ORIGIN = process.env.ORDIN_API_ORIGIN ?? "http://127.0.0.1:8000";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BYTES = 25 * 1024 * 1024;
+const DOC_CLASSES = [
+  "fir", "statement", "forensic_report", "charge_sheet", "court_order", "other",
+];
 
 const CODES: Record<string, string> = {
   content_is_not_pdf: "notpdf",
@@ -50,11 +53,18 @@ export async function POST(request: Request) {
   if (!(file instanceof File) || file.size === 0) return back(target, "error", "input");
   if (file.size > MAX_BYTES) return back(target, "error", "toolarge");
 
+  // Checked against the same list the API and the database constraint use. A
+  // value from a tampered form would be refused upstream anyway; refusing it here
+  // keeps the failure a 303 back to the page rather than a 422 the user never sees.
+  const rawClass = form.get("doc_class");
+  const docClass =
+    typeof rawClass === "string" && DOC_CLASSES.includes(rawClass) ? rawClass : "other";
+
   const token = (await cookies()).get("ordin_session")?.value;
   let upstream: Response;
   try {
     upstream = await fetch(
-      `${API_ORIGIN}/cases/${caseId}/documents?filename=${encodeURIComponent(file.name)}`,
+      `${API_ORIGIN}/cases/${caseId}/documents?filename=${encodeURIComponent(file.name)}&doc_class=${encodeURIComponent(docClass)}`,
       {
         method: "POST",
         headers: {

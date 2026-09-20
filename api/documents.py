@@ -40,6 +40,12 @@ from infra.disclosure import (
 )
 from infra.logging_context import current_correlation_id
 
+# Mirrors the check constraint in migration 0012. Both exist: the constraint is
+# the control, this is the good error message.
+DOC_CLASSES = (
+    "fir", "statement", "forensic_report", "charge_sheet", "court_order", "other",
+)
+
 router = APIRouter(tags=["documents"])
 
 # Rendered at 2x for a legible scan on a laptop screen without shipping a 4 MB PNG.
@@ -823,6 +829,10 @@ async def upload_document(
     case_id: str,
     request: Request,
     filename: str | None = None,
+    # What kind of document this is, for the completeness engine. Validated against the
+    # same list as the database check constraint: an unrecognised class would be
+    # rejected by the constraint anyway, and a 422 here is a better answer than a 500.
+    doc_class: str = "other",
     subject: Subject = Depends(require_subject),
     policy: Policy = Depends(get_policy),
 ):
@@ -877,6 +887,8 @@ async def upload_document(
 
     async with request.app.state.engine.connect() as conn:
         try:
+            if doc_class not in DOC_CLASSES:
+                raise HTTPException(status_code=422, detail="unknown_doc_class")
             document_id, version_id, sha256, _source = await pipeline.ingest(
                 conn, case_id=case_id, filename=_clean_filename(filename), data=data
             )

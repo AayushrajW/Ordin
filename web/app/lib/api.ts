@@ -90,6 +90,33 @@ export type SearchResults = {
   note: string | null;
 };
 
+export type Completeness = {
+  target_state: string;
+  policy: string;
+  percent: number;
+  may_proceed: boolean;
+  satisfied: string[];
+  shortfalls: {
+    doc_class: string;
+    label: string;
+    required: number;
+    present: number;
+    blocking: boolean;
+  }[];
+  /** Always empty in this build: no deadline here has a citation behind it. */
+  deadlines: unknown[];
+  note: string;
+};
+
+export const DOC_CLASSES = [
+  { value: "fir", label: "First Information Report" },
+  { value: "statement", label: "Statement" },
+  { value: "forensic_report", label: "Forensic report" },
+  { value: "charge_sheet", label: "Charge sheet" },
+  { value: "court_order", label: "Court order" },
+  { value: "other", label: "Other" },
+] as const;
+
 export type DemoSubject = { user_id: string; display_name: string; title: string };
 
 export type CaseRecord = {

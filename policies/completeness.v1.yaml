@@ -1,0 +1,83 @@
+# Case completeness.
+#
+# Versioned data, like every other policy here. What a case must contain before it may
+# move to a given state, expressed as counts of document classes.
+#
+# ---------------------------------------------------------------------------------
+# THIS FILE CONTAINS NO STATUTORY DEADLINES, AND THAT IS DELIBERATE.
+# ---------------------------------------------------------------------------------
+#
+# CLAUDE.md: "On any ambiguity in legal or statutory behaviour, ask - never guess
+# section numbers or deadline periods. Every statutory reference cites a source."
+#
+# A checklist that said "charge sheet due within 90 days" would be a statutory claim,
+# and nobody on this build has a citation for it. The `deadlines` list below is
+# therefore **empty**, and the shape that would carry one requires a `source:` field
+# per entry so that adding one without a citation is visibly incomplete rather than
+# quietly plausible.
+#
+# The requirements below are **procedural configuration, not law**. They say what this
+# deployment expects a case file to contain, the way a station's own checklist would.
+# An agency edits this file; it is not a claim about what any code requires.
+#
+# What the engine does with this:
+#   - counts documents per class in a case
+#   - reports what is missing for a target state
+#   - refuses a transition to that state while a `blocking` requirement is unmet
+#
+# What it deliberately does not do: decide whether a case is legally complete, or
+# whether a charge sheet may be filed. Those are decisions for a person, and
+# CLAUDE.md forbids the system making a completeness decision on anyone's behalf.
+
+policy_id: ordin.completeness
+version: 1
+maturity: mvp
+production_adapter: a procedural rule set maintained by the agency, per case type
+
+description: >
+  Document classes a case is expected to hold before it reaches a given state.
+  Procedural configuration, not statute. Carries no deadlines, because no deadline in
+  this build has a citation behind it.
+
+requirements:
+  - state: filed
+    note: >
+      What this deployment expects before a case file is marked filed. Edit for your
+      own procedure; nothing here is asserted to be a legal requirement.
+    classes:
+      - class: fir
+        label: First Information Report
+        minimum: 1
+        blocking: true
+      - class: statement
+        label: Complainant or witness statement
+        minimum: 1
+        blocking: true
+      - class: forensic_report
+        label: Forensic report
+        minimum: 1
+        blocking: false
+      - class: charge_sheet
+        label: Charge sheet
+        minimum: 1
+        blocking: true
+
+  - state: in_trial
+    note: A case reaching trial is expected to carry the order that sent it there.
+    classes:
+      - class: court_order
+        label: Court order
+        minimum: 1
+        blocking: false
+
+# Deadline offsets in days from a named date field, each requiring its own `source:`.
+# Empty until somebody supplies citations. An entry looks like:
+#
+#   - label: Charge sheet
+#     from_field: date_of_incident
+#     days: <number>
+#     source: "<the provision, and where it was read>"
+#
+# The engine refuses to load an entry with no `source`, so a deadline cannot be added
+# by accident.
+deadlines: []

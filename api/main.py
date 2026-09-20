@@ -26,6 +26,7 @@ from api.search import router as search_router
 from api.sentinel_routes import router as sentinel_router
 from api.security import SecurityMiddleware
 from api.session import router as session_router
+from domain.completeness import load_completeness_policy
 from domain.policy import load_policy
 from infra.blobstore import LocalBlobStore
 
@@ -81,6 +82,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # with the same failure mode: a bad file stops the process rather than denying
     # every request while looking like an outage.
     app.state.admin_policy = load_policy(policies / "admin.v1.yaml")
+    # Procedural configuration rather than authorization, but loaded the same way
+    # and for the same reason: a malformed file stops the process instead of
+    # quietly reporting every case complete.
+    app.state.completeness = load_completeness_policy(policies / "completeness.v1.yaml")
     # One store, constructed once. A relative root resolves against the project
     # root so the api and the worker address the same bytes without either owning
     # the path (the worker builds its own store from the same setting).

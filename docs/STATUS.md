@@ -160,28 +160,31 @@ not start rather than appearing to work.
 **Nothing is half-done.** Working tree committed, 325 tests green, no partially written
 file and no partially implemented code path.
 
-## Measured, 2026-09-19
+## Measured, 2026-09-21 (`python tasks.py evaluate`)
 
 OCR character error rate, real Tesseract over rasterised pages, 48-document corpus:
 
 | language | documents | chars | errors | CER |
 |---|---|---|---|---|
-| eng | 37 | 15770 | 560 | **3.55%** |
-| hin | 11 | 4151 | 976 | **23.51%** |
+| eng | 37 | 17035 | 670 | **3.93%** |
+| hin | 11 | 4527 | 1047 | **23.13%** |
 
 | condition | documents | chars | errors | CER |
 |---|---|---|---|---|
-| clean renders | 37 | 15528 | 335 | **2.16%** |
-| degraded scans | 11 | 4393 | 1201 | **27.34%** |
+| clean renders | 37 | 16794 | 349 | **2.08%** |
+| degraded scans | 11 | 4768 | 1368 | **28.69%** |
 
-Latency p50 1.16s, p95 2.42s. Four containers: 317 MiB total (measured after the
+Latency p50 0.91s, p95 1.96s. Four containers: 317 MiB total (measured after the
 worker gained real work; it was 206 MiB when the worker only beat).
 
 **Three findings to say out loud rather than bury:**
 
-- **Degradation costs an order of magnitude.** 2.16% on clean renders against 27.34% on
+- **Degradation costs an order of magnitude.** 2.08% on clean renders against 28.69% on
   a mild synthetic degradation — tilt, 120 dpi, speckle, no text layer. The earlier
   0.34% headline was true of ten clean renders and is not a claim about real intake.
+  Re-measured 2026-09-21 after every specimen gained a date line: the corpus changed,
+  so the figures changed, and stale numbers here would be the exact drift the
+  deck-vs-build audit criticised.
 - **Hindi is roughly six times worse than English** and was ten times worse on the clean
   corpus. Any bilingual claim carries that number.
 - **Tesseract misreads digits on clean pages.** On the specimen complaint it reads the

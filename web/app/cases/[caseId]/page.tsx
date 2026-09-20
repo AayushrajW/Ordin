@@ -12,13 +12,24 @@
  * (threat INS-04).
  */
 import Shell, { PageHeader } from "../../components/Shell";
-import { IconArrowRight, IconDoc, IconLock, IconShield, IconUpload } from "../../components/icons";
+import {
+  IconAlert,
+  IconArrowRight,
+  IconCheck,
+  IconChecklist,
+  IconDoc,
+  IconLock,
+  IconShield,
+  IconUpload,
+} from "../../components/icons";
 import { Empty, Notice, SealedTag, StateRail, relative, stateLabel } from "../../components/ui";
 import {
   currentSubject,
   get,
   type CaseRecord,
   type CaseSummary,
+  DOC_CLASSES,
+  type Completeness,
   type DocumentRecord,
 } from "../../lib/api";
 
@@ -59,6 +70,9 @@ export default async function CasePage({
   const record = subject ? await get<CaseRecord>(`/cases/${caseId}`) : null;
   const summary = record ? await get<CaseSummary>(`/cases/${caseId}/summary`) : null;
   const documents = record ? ((await get<DocumentRecord[]>(`/cases/${caseId}/documents`)) ?? []) : [];
+  // Null for a grantee: the endpoint needs the case, and a redacted-derivative
+  // route reaches it, so the panel simply does not render rather than showing zeros.
+  const completeness = record ? await get<Completeness>(`/cases/${caseId}/completeness`) : null;
 
   if (!record) {
     return (
@@ -181,6 +195,21 @@ export default async function CasePage({
                     broken. Styling `::file-selector-button` keeps the browser's own
                     filename display, so the chosen file is confirmed without any
                     client-side JavaScript. */}
+                <label className="block">
+                  <span className="mb-1 block text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-ink-500">
+                    Kind
+                  </span>
+                  {/* What this document is. Without it every document stays `other` and
+                      the completeness checklist counts nothing - a control that renders
+                      and measures nothing, which is worse than no control. */}
+                  <select name="doc_class" className="field text-xs" defaultValue="other">
+                    {DOC_CLASSES.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <input
                   type="file"
                   name="file"
@@ -201,6 +230,75 @@ export default async function CasePage({
         </section>
 
         <aside className="space-y-4">
+          {/* Completeness. Reports; does not decide. "This case has no forensic report"
+              is an observation anybody can check — "this case is ready to file" is a
+              judgement with consequences, and the system does not make it. */}
+          {completeness && (
+            <div className="surface overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-paper-200 px-5 py-3.5">
+                <IconChecklist className="h-4 w-4 text-brass-500" />
+                <h2 className="section-title">Case file completeness</h2>
+              </div>
+              <div className="px-5 py-4">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-2xl font-semibold tabular-nums text-ink-900">
+                    {completeness.percent}%
+                  </span>
+                  <span className="text-xs text-ink-500">
+                    expected before <strong>{stateLabel(completeness.target_state)}</strong>
+                  </span>
+                </div>
+                <div
+                  className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-paper-300"
+                  role="progressbar"
+                  aria-valuenow={completeness.percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Case file completeness"
+                >
+                  <div
+                    className={`h-full rounded-full ${
+                      completeness.may_proceed ? "bg-verified-500" : "bg-caution-500"
+                    }`}
+                    style={{ width: `${completeness.percent}%` }}
+                  />
+                </div>
+
+                <ul className="mt-4 space-y-1.5">
+                  {completeness.satisfied.map((label) => (
+                    <li key={label} className="flex items-center gap-2 text-xs text-ink-600">
+                      <IconCheck className="h-3.5 w-3.5 shrink-0 text-verified-600" />
+                      {label}
+                    </li>
+                  ))}
+                  {completeness.shortfalls.map((s) => (
+                    <li
+                      key={s.doc_class}
+                      className={`flex items-center gap-2 text-xs ${
+                        s.blocking ? "text-danger-700" : "text-caution-700"
+                      }`}
+                    >
+                      <IconAlert className="h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {s.label}
+                        <span className="text-ink-400">
+                          {" "}
+                          — {s.present} of {s.required}
+                          {s.blocking ? " · required" : " · expected"}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                <p className="mt-4 border-t border-paper-200 pt-3 text-[0.7rem] leading-relaxed text-ink-400">
+                  {completeness.note} Decided by{" "}
+                  <span className="mono text-ink-500">{completeness.policy}</span>.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="surface overflow-hidden">
             <div className="flex items-center gap-2 border-b border-paper-200 px-5 py-3.5">
               <IconShield className="h-4 w-4 text-brass-500" />

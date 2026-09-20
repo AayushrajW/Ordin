@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from api.deps import policy as get_policy
 from api.deps import require_subject
 from domain.case import InvalidTransition, transition
+from domain.completeness import assess
 from domain.enums import AuditAction, CaseState
 from domain.policy import Policy
 from domain.subject import Subject
@@ -422,6 +423,28 @@ async def change_case_state(
         except (InvalidTransition, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 
+        # Completeness gate. Reports everything, refuses only what the policy marks
+        # blocking — a checklist that cannot be satisfied is ignored within a week, and
+        # an ignored checklist is worse than none because it still looks like a control.
+        report = assess(
+            request.app.state.completeness,
+            target_state=target.value,
+            counts=await _class_counts(conn, case_id),
+        )
+        if not report.may_proceed:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "reason": "incomplete",
+                    "policy": report.policy_id,
+                    "missing": [
+                        {"class": s.doc_class, "label": s.label,
+                         "required": s.required, "present": s.present}
+                        for s in report.blocking
+                    ],
+                },
+            )
+
         await conn.execute(
             sa.text("UPDATE case_record SET state = :s WHERE id = :c"),
             {"s": target.value, "c": case_id},
@@ -441,3 +464,95 @@ async def change_case_state(
                "from": current, "to": target.value},
     )
     return {"case_id": case_id, "from": current, "to": target.value}
+
+
+async def _class_counts(conn, case_id: str) -> dict[str, int]:
+    """How many documents of each class this case holds.
+
+    Counts `document`, not `document_version`: a redacted derivative is another version
+    of the same document, and counting versions would let redacting an FIR twice satisfy
+    a requirement for three FIRs.
+    """
+    rows = (
+        await conn.execute(
+            sa.text(
+                "SELECT doc_class, count(*) AS n FROM document "
+                "WHERE case_id = :c GROUP BY doc_class"
+            ),
+            {"c": case_id},
+        )
+    ).mappings().all()
+    return {r["doc_class"]: int(r["n"]) for r in rows}
+
+
+class ShortfallOut(BaseModel):
+    doc_class: str
+    label: str
+    required: int
+    present: int
+    blocking: bool
+
+
+class CompletenessOut(BaseModel):
+    target_state: str
+    policy: str
+    percent: int
+    may_proceed: bool
+    satisfied: list[str]
+    shortfalls: list[ShortfallOut]
+    # Always empty in this build, and the field exists so the absence is visible rather
+    # than looking like a feature nobody built.
+    deadlines: list[dict]
+    note: str
+
+
+@router.get("/cases/{case_id}/completeness")
+async def case_completeness(
+    case_id: str,
+    request: Request,
+    target: str | None = Query(default=None),
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+) -> CompletenessOut:
+    """What this case holds, against what the policy expects for a target state.
+
+    Reports. Does not decide. "This case has no forensic report" is an observation
+    anybody can check; "this case is ready to file" is a judgement with consequences,
+    and CLAUDE.md is explicit that the system does not make it.
+    """
+    engine = request.app.state.engine
+    at = datetime.now(timezone.utc)
+
+    async with engine.connect() as conn:
+        allowed = authorized_cases(policy, subject, at).subquery()
+        state = (
+            await conn.execute(sa.select(allowed.c.state).where(allowed.c.id == case_id))
+        ).scalar_one_or_none()
+        if state is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        counts = await _class_counts(conn, case_id)
+
+    # Default to the next state a case would plausibly be checked against.
+    target_state = target or CaseState.FILED.value
+    report = assess(request.app.state.completeness, target_state=target_state, counts=counts)
+
+    return CompletenessOut(
+        target_state=target_state,
+        policy=report.policy_id,
+        percent=report.percent,
+        may_proceed=report.may_proceed,
+        satisfied=[r.label for r in report.satisfied],
+        shortfalls=[
+            ShortfallOut(
+                doc_class=s.doc_class, label=s.label, required=s.required,
+                present=s.present, blocking=s.blocking,
+            )
+            for s in report.shortfalls
+        ],
+        deadlines=[],
+        note=(
+            "Procedural configuration, not statute. This build carries no statutory "
+            "deadlines because none of them has a citation behind it, and the policy "
+            "loader refuses a deadline with no source."
+        ),
+    )

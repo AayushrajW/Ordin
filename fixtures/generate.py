@@ -76,6 +76,7 @@ CORPUS: list[Doc] = [
         slug="complaint-0001", title="Complaint Record", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
         fields=[
+            Field("date_of_incident", "12 January 2026"),
             Field("complainant_name", "Anjali Bhosle"),
             Field("complainant_address", "14 Marigold Lane, Vranaspur North"),
             Field("complainant_phone", "0900000101"),
@@ -92,6 +93,7 @@ CORPUS: list[Doc] = [
         slug="complaint-0002", title="Complaint Record", language="eng",
         station="Vranaspur South Police Station", reference="VRN-S/2026/0002",
         fields=[
+            Field("date_of_incident", "14 January 2026"),
             Field("complainant_name", "Farida Sheikh"),
             Field("complainant_address", "8 Tamarind Road, Vranaspur South"),
             Field("complainant_phone", "0900000102"),
@@ -107,6 +109,7 @@ CORPUS: list[Doc] = [
         slug="witness-0003", title="Witness Statement", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
         fields=[
+            Field("date_of_incident", "16 January 2026"),
             Field("witness_name", "Prakash Iyer"),
             Field("witness_address", "22 Canal Street, Vranaspur North"),
         ],
@@ -121,6 +124,7 @@ CORPUS: list[Doc] = [
         slug="witness-0004", title="Witness Statement", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0003",
         fields=[
+            Field("date_of_incident", "18 January 2026"),
             Field("witness_name", "Leela Menon"),
             Field("witness_phone", "0900000104"),
         ],
@@ -134,6 +138,7 @@ CORPUS: list[Doc] = [
         slug="medical-0005", title="Medical Examination Record", language="eng",
         station="Vranaspur District Hospital", reference="VRN-N/2026/0003",
         fields=[
+            Field("date_of_incident", "21 January 2026"),
             Field("victim_name", "Sunita Kale"),
             Field("victim_address", "3 Peepal Colony, Vranaspur North"),
         ],
@@ -148,6 +153,7 @@ CORPUS: list[Doc] = [
         slug="seizure-0006", title="Seizure Memo", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
         fields=[
+            Field("date_of_incident", "24 January 2026"),
             Field("officer_name", "SI Kavya Raut"),
             Field("witness_name", "Prakash Iyer"),
         ],
@@ -161,6 +167,7 @@ CORPUS: list[Doc] = [
         slug="transfer-0007", title="Case Transfer Note", language="eng",
         station="Vranaspur South Police Station", reference="VRN-S/2026/0002",
         fields=[
+            Field("date_of_incident", "27 January 2026"),
             Field("officer_name", "SHO Rahul Desai"),
         ],
         body=[
@@ -173,6 +180,7 @@ CORPUS: list[Doc] = [
         slug="complaint-0008-hi", title="शिकायत अभिलेख", language="hin",
         station="व्रनासपुर उत्तर पुलिस थाना", reference="VRN-N/2026/0008",
         fields=[
+            Field("date_of_incident", "30 January 2026"),
             Field("complainant_name", "मीरा जोशी"),
             Field("complainant_address", "११ गुलमोहर मार्ग, व्रनासपुर उत्तर"),
         ],
@@ -187,6 +195,7 @@ CORPUS: list[Doc] = [
         slug="witness-0009-hi", title="साक्षी कथन", language="hin",
         station="व्रनासपुर उत्तर पुलिस थाना", reference="VRN-N/2026/0008",
         fields=[
+            Field("date_of_incident", "02 February 2026"),
             Field("witness_name", "रमेश गुप्ता"),
         ],
         body=[
@@ -203,6 +212,7 @@ CORPUS: list[Doc] = [
         slug="statement-0011", title="Victim Statement", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
         fields=[
+            Field("date_of_incident", "05 February 2026"),
             Field("victim_name", "Rukmini Deshmukh"),
             Field("victim_phone", "0900000111"),
             Field("victim_address", "27 Banyan Cross, Vranaspur North"),
@@ -219,6 +229,7 @@ CORPUS: list[Doc] = [
         slug="property-0010", title="Property Register Extract", language="eng",
         station="Vranaspur North Police Station", reference="VRN-N/2026/0001",
         fields=[
+            Field("date_of_incident", "09 February 2026"),
             Field("officer_name", "SI Kavya Raut"),
         ],
         body=[

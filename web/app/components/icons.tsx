@@ -49,6 +49,9 @@ export const IconX = (p: P) => (
 export const IconArrowRight = (p: P) => (
   <Svg {...p}><path d="M4 10h11.5m-4.5-4.5L15.5 10 11 14.5" /></Svg>
 );
+export const IconChecklist = (p: P) => (
+  <Svg {...p}><path d="M7.5 5.5h8M7.5 10h8M7.5 14.5h8M3.6 5.5l1 1 1.8-1.8M3.6 10l1 1 1.8-1.8M3.6 14.5l1 1 1.8-1.8" /></Svg>
+);
 export const IconSearch = (p: P) => (
   <Svg {...p}><circle cx="9" cy="9" r="5.2" /><path d="m12.8 12.8 3.7 3.7" /></Svg>
 );

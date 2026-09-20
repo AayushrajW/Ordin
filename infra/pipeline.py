@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 
 from domain.enums import JobStage, JobStatus
-from domain.extraction import extract_fields
+from domain.extraction import extract_fields, extract_statutory_references
 from infra.anchor import LocalAnchorStore
 from infra.blobstore import BlobStore, sha256_bytes
 from infra.esign import SimulatedESignProvider
@@ -145,7 +145,13 @@ class Pipeline:
     # --- the thread -----------------------------------------------------------
 
     async def ingest(
-        self, conn, *, case_id: str, filename: str, data: bytes
+        self,
+        conn,
+        *,
+        case_id: str,
+        filename: str,
+        data: bytes,
+        doc_class: str = "other",
     ) -> tuple[str, str, str, str]:
         """Validate and version, without running a single stage.
 
@@ -177,6 +183,7 @@ class Pipeline:
         document_id, version_id = await self._upsert_version(
             conn, case_id=case_id, filename=filename, data=intake.data,
             content_sha256=intake.sha256, source_sha256=intake.original_sha256,
+            doc_class=doc_class,
         )
         return (
             str(document_id), str(version_id), intake.sha256, intake.original_sha256,
@@ -184,12 +191,16 @@ class Pipeline:
 
     async def run(
         self, conn, *, case_id: str, actor_id: str, filename: str, data: bytes,
-        at: datetime | None = None,
+        at: datetime | None = None, doc_class: str = "other",
     ) -> PipelineResult:
         """Ingest and then process, in one call. The headless path and the tests."""
         at = at or datetime.now(timezone.utc)
         document_id, version_id, content_sha256, source_sha256 = await self.ingest(
-            conn, case_id=case_id, filename=filename, data=data
+            # Passed through rather than defaulted here: `run` and `ingest` must
+            # classify identically, or a document filed through the headless path is
+            # invisible to the completeness engine while the same file uploaded through
+            # the API is counted.
+            conn, case_id=case_id, filename=filename, data=data, doc_class=doc_class
         )
         return await self.process_version(
             conn, case_id=case_id, document_id=document_id, version_id=version_id,
@@ -263,7 +274,8 @@ class Pipeline:
         return result
 
     async def _upsert_version(
-        self, conn, *, case_id, filename, data, content_sha256, source_sha256=None
+        self, conn, *, case_id, filename, data, content_sha256, source_sha256=None,
+        doc_class="other",
     ):
         """Store the bytes and find-or-create the version.
 
@@ -299,8 +311,24 @@ class Pipeline:
         if document_id is None:
             document_id = uuid.uuid4()
             await conn.execute(
-                sa.text("INSERT INTO document (id, case_id, title) VALUES (:i,:c,:t)"),
-                {"i": document_id, "c": case_id, "t": filename},
+                sa.text(
+                    "INSERT INTO document (id, case_id, title, doc_class) "
+                    "VALUES (:i,:c,:t,:k)"
+                ),
+                {"i": document_id, "c": case_id, "t": filename, "k": doc_class},
+            )
+        elif doc_class != "other":
+            # A later upload of the same filename may classify a document that was
+            # filed as `other` first. It never RE-classifies: a document already
+            # declared an FIR is not silently turned into something else by whoever
+            # uploads next, because that would move a case's completeness without
+            # anybody deciding to.
+            await conn.execute(
+                sa.text(
+                    "UPDATE document SET doc_class = :k "
+                    "WHERE id = :i AND doc_class = 'other'"
+                ),
+                {"k": doc_class, "i": document_id},
             )
 
         next_no = (
@@ -377,7 +405,11 @@ class Pipeline:
             return f"manual_entry_required:{version_id}", "ordin.regex", "mvp"
 
         count = 0
-        for found in extract_fields(row["text"]):
+        # Labelled fields, then statutory references. Both land in the same table, with
+        # the same draft status and the same human commit, because a detected citation
+        # is exactly as provisional as a detected name: a pattern matched, and nobody
+        # has agreed with it yet (invariant 9).
+        for found in [*extract_fields(row["text"]), *extract_statutory_references(row["text"])]:
             await conn.execute(
                 sa.text(
                     "INSERT INTO extracted_field "
