@@ -40,9 +40,9 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**374 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+**377 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
 `tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
-back. Compose path verified at **226 MiB**.
+back. Compose path verified at **234 MiB**.
 
 **Do not run two suites against one database.** A session-scoped guard in
 `tests/conftest.py` refuses the second one with an explanation — see *Surprising*
@@ -150,6 +150,56 @@ worker gained real work; it was 206 MiB when the worker only beat).
 
 All three compound accepted risk AR-6: redaction targeting depends on locating a value
 in OCR text, so it is least reliable exactly where the documents are worst.
+
+## Second full recheck, 2026-09-20 (afternoon)
+
+Whole repo re-read, whole suite re-run, whole demo re-rehearsed, on a database and a
+Docker installation rebuilt from nothing.
+
+| step | result |
+|---|---|
+| migrations from an **empty** database | all 8 clean — a path never exercised before, because the volume always pre-existed |
+| `python tasks.py test` | **377 passed**, 162s then 137s |
+| `python tasks.py demo` | 5 documents, 16-region derivative, 18 drafts |
+| Officer: dashboard → case → workbench | 1 case of 3; both real OCR misreads flagged |
+| Commit a suggested correction | verified by a person; machine reading kept, superseded; counts 4→3, flags 2→1 |
+| Redaction preview → burn | 8 mentions / 16 regions, 5 outside the labelled lines; burn deduped |
+| Redacted derivative | **Verified**, anchored #3 |
+| Grantee: same URL, original version id | derivative only; v1 absent from the selector; no custody trail |
+| Lapsed clearance: document named directly | "It does not exist, or you may not receive it — deliberately indistinguishable" |
+| Sentinel, browser | **19/19 twice** (13:49:59, 13:50:13) |
+| `verify-compose` | four containers, web green, telemetry off, **234 MiB**, torn down |
+
+**Both fixes from the first rehearsal held**: a corrected draft is no longer counted as
+awaiting review, and a redacted derivative is anchored at birth.
+
+**One real bug found, fixed, committed (`253e0cc`, ADR 0023).** The image pixel cap ran
+*after* `fitz.Pixmap()` had decoded the whole image. `MAX_BYTES` caps the upload at 25 MB
+and does not bound the decoded size, so a 25 MB PNG decodes to gigabytes and exhausts the
+worker's 256 MB limit — threat OPS-03. The cap is now applied to the dimensions the header
+declares. The test that should have caught it was named
+`test_an_enormous_image_is_refused_before_it_is_rasterised`, passed, and asserted nothing
+about the ordering: it decoded the specimen itself to decide what to expect.
+
+**`fitz.image_profile` is broken in PyMuPDF 1.26.7** — the binding passes a `bytes` to
+`fz_recognize_image_format`, which rejects it on every input. Hence the hand-written
+header parser. A control that cannot run is worse than none: it reads as present.
+
+## Docker: the install on this machine is not trustworthy
+
+Docker Desktop 4.91.0 on Windows 11 build 26200 failed to start for hours. Its Ingest
+server creates `%LOCALAPPDATA%\Docker\run\sailor-ingest.sock`, then cannot rename it
+aside, and aborts — leaving the socket behind, which is exactly what breaks the next
+start. Error 1920, `ERROR_CANT_ACCESS_FILE`; even `fsutil reparsepoint query` failed,
+with no Docker process running.
+
+**Ruled out by experiment**: stale files, Docker's data and settings, the WSL distro,
+driver state, the shell it is started from, and antivirus (Windows Defender only, no
+third-party filter driver). It survived a reboot, a full wipe of all three Docker
+directories and `wsl --unregister docker-desktop`.
+
+What cleared it was the builder resetting Docker Desktop manually from its own dialog.
+**Reinstall Docker Desktop before the event** — `docker compose up` is the demo path.
 
 ## Rehearsal record, 2026-09-20
 
