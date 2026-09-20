@@ -1,0 +1,52 @@
+# Administrative capability.
+#
+# Versioned data, not code (security invariant 3). CLAUDE.md forbids hand-rolled role
+# conditionals in application code anywhere. An administration screen is exactly where
+# one gets written, so the decision is made here instead, and it records this policy_id
+# like every other.
+#
+# **This policy grants no case access and must never be extended to.** There is no rule
+# below that could ever produce a route to a case record: administration is the power to
+# place people, and reading their evidence is a separate question answered only by
+# ordin.case_read. An administrator who could also read every case would be precisely
+# the "seniority implies access" rule the whole authorization model exists to refuse.
+#
+# The evaluator is case-scoped by construction, so callers pass a neutral CaseFacts.
+# None of the predicates below reads it.
+
+policy_id: ordin.admin
+version: 1
+maturity: mvp
+production_adapter: OPA
+
+description: >
+  Administrative capability is held by the post, not the person, and only while the
+  account is active with a current clearance. It permits placing accounts, assigning
+  designations and issuing grants. It permits reading no case, no document and no
+  extracted field.
+
+rules:
+  # --- denials first ------------------------------------------------------
+  - id: inactive-subject
+    effect: deny
+    when:
+      - not subject_is_active
+
+  # An administrator whose own clearance has lapsed stops being one immediately. The
+  # three clocks intersect here exactly as they do for case access (threat AZM-06).
+  - id: lapsed-clearance
+    effect: deny
+    when:
+      - not clearance_current
+
+  # --- the only ground ----------------------------------------------------
+  - id: administrative-post
+    effect: allow
+    when:
+      - post_is_administrative
+
+  # --- terminal -----------------------------------------------------------
+  # Required by the loader. Deny by default, fail closed. A post that is not
+  # administrative reaches here and is refused, which is every post but one.
+  - id: default-deny
+    effect: deny

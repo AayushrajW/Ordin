@@ -127,6 +127,19 @@ def _subject_is_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -
 # Keyed by exactly the names in domain/predicates.REGISTRY. A test asserts the two
 # key sets are identical, so a predicate added to one side and not the other is a
 # test failure rather than a policy that behaves differently in SQL.
+def _post_is_administrative(
+    s: Subject, case: sa.Table, tables: dict, at: datetime
+) -> ColumnElement:
+    """A property of the subject, so it lifts to a constant like the clearance ones.
+
+    Present for registry parity: `tests/test_policy_sql_agreement.py` asserts the two
+    key sets are identical, so a predicate added on one side only is a test failure
+    rather than a policy that behaves differently in SQL. No case_read rule uses it,
+    and none should.
+    """
+    return sa.true() if s.post_is_administrative else sa.false()
+
+
 SQL_REGISTRY = {
     "assignment_active": _assignment_active,
     "same_organization": _same_organization,
@@ -137,6 +150,7 @@ SQL_REGISTRY = {
     "clearance_current": _clearance_current,
     "clearance_permits_sealed": _clearance_permits_sealed,
     "subject_is_active": _subject_is_active,
+    "post_is_administrative": _post_is_administrative,
 }
 
 

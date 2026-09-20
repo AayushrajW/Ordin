@@ -50,7 +50,7 @@ exists for. If something is wrong it tells you which thing.
 ### The three things worth seeing
 
 ```bash
-python tasks.py sentinel         # 19 security scenarios, each able to go red
+python tasks.py sentinel         # 21 security scenarios, each able to go red
 python tasks.py evaluate         # OCR accuracy and latency, with its caveats
 python tasks.py verify-compose   # all four containers, inside 8 GB
 ```
@@ -76,7 +76,10 @@ something you watch pass rather than something we assert.
 | Intake | PDFs **and photographs** — re-encoded, so EXIF and GPS never reach the store |
 | Voice | reads a screen aloud; never speaks a name; cannot commit or redact |
 | Accounts | password login (Argon2id); signing in grants nothing until an administrator places you |
-| Sentinel | 19 scenarios, rendered on a page and re-run live on every load |
+| Administration | place accounts, designate officers, issue and revoke grants — decided by policy, and reading no case |
+| Search | full-text over OCR, predicate inside the query, snippets gated by disclosure class |
+| Deployment | production compose overlay, a config guard that refuses template secrets, backup and restore scripts |
+| Sentinel | 21 scenarios, rendered on a page and re-run live on every load |
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
@@ -130,6 +133,7 @@ in this repository.
 | `docs/PLAN.md` | build order, budget, and what was cut |
 | `docs/THREAT-MODEL.md` | 8 attacker classes, invariant coverage, accepted risks |
 | `docs/STATUS.md` | where the build actually is, written for a cold start |
-| `docs/adr/` | 24 decisions, each with its consequences |
+| `docs/adr/` | 27 decisions, each with its consequences |
+| `docs/DEPLOYMENT.md` | how to deploy it, and what deploying it does not cover |
 | `docs/PLAN-PRODUCT.md` | the work from demo to deployable, and what was actually true |
 | `docs/modules/` | one page per landed slice, with the questions a judge will ask |

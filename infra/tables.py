@@ -69,6 +69,8 @@ post = sa.Table(
     sa.Column("organization_id", sa.Uuid()),
     sa.Column("jurisdiction_id", sa.Uuid()),
     sa.Column("title", sa.Text()),
+    # Administration is an office, not a personal attribute (migration 0009).
+    sa.Column("is_administrative", sa.Boolean()),
 )
 
 party = sa.Table(

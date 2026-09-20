@@ -1,0 +1,124 @@
+# Ordin — deployment overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# An overlay rather than a second full file, so there is one description of the
+# system and the differences are legible. `docs/DEPLOYMENT.md` is the procedure.
+#
+# What this changes, and why each one matters:
+#
+#   ORDIN_ENV=production  — `Settings.refuse_unsafe_production` then **refuses to
+#                           start** on a template session secret or database password,
+#                           and `api/session.py` 404s the credential-free specimen
+#                           switcher. Both are the difference between a demo and a
+#                           deployment, and neither is a warning.
+#   published ports       — the api and the database are no longer published at all.
+#                           Only the web tier is, and only to loopback, because a
+#                           reverse proxy terminates TLS in front of it. Publishing an
+#                           API with no network authentication on an interface anyone
+#                           can reach is threat EXT-01 with the door held open.
+#   read_only + no-new-privileges + dropped capabilities — AR-11 recorded "no container
+#                           hardening" as accepted. This narrows it. tmpfs is mounted
+#                           where each image genuinely needs to write.
+#   restart: always       — unless-stopped does not survive a host reboot.
+#   log rotation          — an unrotated JSON log fills the disk, and the first thing
+#                           that fails when the disk fills is postgres.
+#
+# What it does **not** do: TLS, backups, or secret management. Those are the operator's,
+# and DEPLOYMENT.md says so rather than implying this file is sufficient.
+
+services:
+  postgres:
+    restart: always
+    # Not published. Nothing outside this compose network needs the database, and
+    # publishing it even on loopback invites an SSH tunnel round every control here.
+    ports: !override []
+    environment:
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      ORDIN_APP_PASSWORD: ${ORDIN_APP_PASSWORD:?required}
+    security_opt:
+      - no-new-privileges:true
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  api:
+    restart: always
+    # Reached only through the web tier, over the compose network.
+    ports: !override []
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      POSTGRES_OWNER_USER: ${POSTGRES_OWNER_USER:?required}
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?required}
+      ORDIN_APP_USER: ${ORDIN_APP_USER:-ordin_app}
+      ORDIN_APP_PASSWORD: ${ORDIN_APP_PASSWORD:?required}
+      ORDIN_SESSION_SECRET: ${ORDIN_SESSION_SECRET:?required}
+      ORDIN_ENV: production
+      ORDIN_LOG_LEVEL: ${ORDIN_LOG_LEVEL:-INFO}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+  worker:
+    restart: always
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      POSTGRES_OWNER_USER: ${POSTGRES_OWNER_USER:?required}
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?required}
+      ORDIN_APP_USER: ${ORDIN_APP_USER:-ordin_app}
+      ORDIN_APP_PASSWORD: ${ORDIN_APP_PASSWORD:?required}
+      ORDIN_SESSION_SECRET: ${ORDIN_SESSION_SECRET:?required}
+      ORDIN_ENV: production
+      ORDIN_LOG_LEVEL: ${ORDIN_LOG_LEVEL:-INFO}
+    # Not read_only: Tesseract and PyMuPDF write temporary files, and the blob store
+    # is a real volume. tmpfs would silently cap the size of a document being processed.
+    volumes:
+      - ordin_blobs:/app/var/blobs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+  web:
+    restart: always
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      ORDIN_API_ORIGIN: http://api:8000
+      ORDIN_ENV: production
+      NODE_ENV: production
+    ports: !override
+      # Loopback only. A reverse proxy in front of this terminates TLS and is what the
+      # world reaches — see docs/DEPLOYMENT.md. Binding 0.0.0.0 here serves the
+      # application over plain HTTP, and a session cookie sent over plain HTTP is a
+      # session anyone on the path can take.
+      - "127.0.0.1:${ORDIN_WEB_PORT:-3001}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+volumes:
+  # The api writes nothing; the worker owns the blob store. Named so a `docker compose
+  # down` cannot take the evidence with it — `down -v` still can, which is why
+  # DEPLOYMENT.md has a backup section and not a sentence about backups.
+  ordin_blobs:
+    name: ordin_blobs

@@ -19,6 +19,7 @@ import uuid
 
 import httpx
 import pytest
+from pydantic import SecretStr
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -181,7 +182,20 @@ async def test_the_specimen_switcher_is_refused_outside_dev(live_settings):
     import seed as seed_module
 
     await seed_module.seed()
-    production = live_settings.model_copy(update={"ordin_env": "production"})
+    # A real session secret as well as a production environment: `create_app` now calls
+    # `refuse_unsafe_production`, which will not build an application on the template
+    # value (ADR 0027). That guard firing here is it working, not a test fixture detail.
+    production = live_settings.model_copy(
+        update={
+            "ordin_env": "production",
+            # SecretStr, not str: `model_copy(update=...)` bypasses validation, so a
+            # plain string would stay a plain string and the guard would meet the
+            # wrong type rather than the wrong value.
+            "ordin_session_secret": SecretStr(
+                "a-real-session-secret-of-sufficient-length-for-production"
+            ),
+        }
+    )
     app = create_app(production)
     engine = create_async_engine(production.app_dsn)
     app.state.engine = engine

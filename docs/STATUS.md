@@ -18,7 +18,48 @@ Then open **http://127.0.0.1:3001** and pick a specimen identity.
 
 ## Current slice
 
-**None. PLAN is complete.** Every slice in the build order is built, including the
+**None. `docs/PLAN.md` and `docs/PLAN-PRODUCT.md` are both complete.**
+
+## From demo to product, 2026-09-20
+
+The builder's direction: *"I want the product that could be published or deployed. This
+is just for show — I cannot upload files or images, cannot search the database, cannot
+login/signup."* Two of the three were accurate; `docs/PLAN-PRODUCT.md` records which,
+and what was done about each.
+
+| | |
+|---|---|
+| **Upload** | Worked all along; the control was styled `file:hidden`, so there was no visible way to open the picker. A working feature with an invisible affordance. |
+| **Accounts** (ADR 0024) | Email and password, Argon2id at OWASP minimum parameters, lockout on the account row. Signup creates an account with **no post**, so no organization, no jurisdiction, no clearance, no Subject — and every query empty until an administrator places it. |
+| **Administration** (ADR 0025) | `post.is_administrative`, decided by `policies/admin.v1.yaml`, logging the rule id. An administrator places people and **reads no case**: `/cases` returns `[]` for them, verified live. |
+| **Search** (ADR 0026) | Postgres full-text, predicate inside the query, snippets gated by disclosure class. A grantee finds the case and receives **no document text at all**. |
+| **Deployment** (ADR 0027) | `docker-compose.prod.yml`, a config guard that refuses to start on template secrets, `scripts/backup.sh` and `restore.sh`, `render.yaml`, `docs/DEPLOYMENT.md`. |
+
+**Why authentication was half a day rather than four.** `require_subject` already
+re-resolved all seven dimensions from the database on every request and trusted the token
+for nothing but *who*. Verifying a password and issuing that same token left the policy
+evaluator, the SQL filter, the disclosure class and every Sentinel scenario untouched —
+**no authorization test needed changing.** Worth saying out loud in the deck.
+
+**The specimen switcher survives at `/specimen`, under `ORDIN_ENV=dev` only.** The API
+404s its endpoints outside dev. Hiding it from the UI is not a control: this repository
+is public.
+
+**Signing in as the administrator shows zero cases. That is the control, not a bug.**
+
+### Bootstrap
+
+```bash
+python tasks.py admin --email you@example.org --password '<12+ characters>'
+```
+
+Put the same values in `.env` as `ORDIN_ADMIN_EMAIL` / `ORDIN_ADMIN_PASSWORD` and
+`tasks.py demo` restores the account after it reseeds, instead of locking the operator
+out of their own system. This machine currently has `admin@gmail.com` with a **five
+character password**, at the builder's request — fine on a specimen laptop, and it must
+not survive into anything deployed.
+
+## Half-done, and exactly where — superseded, see below Every slice in the build order is built, including the
 Tier C items that were listed as optional.
 
 ## What a demo looks like
@@ -40,9 +81,9 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**377 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
+**442 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
 `tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
-back. Compose path verified at **234 MiB**.
+back. Compose path verified at **234 MiB**. Sentinel is now **21 scenarios**.
 
 **Do not run two suites against one database.** A session-scoped guard in
 `tests/conftest.py` refuses the second one with an explanation — see *Surprising*

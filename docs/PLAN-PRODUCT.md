@@ -41,7 +41,7 @@ boundary change.
 Native control styled rather than hidden, so the picker opens and the browser's own
 filename display confirms the choice, with no client-side JavaScript.
 
-### P2 — real accounts
+### P2 — real accounts ✅ done (ADR 0024)
 - Migration `0009_accounts`: `app_user` gains `email` (unique, citext), `password_hash`,
   `is_active`, `created_at`, `last_login_at`, `failed_attempts`, `locked_until`.
 - `PasswordAuthenticator` verifies and issues the existing signed token.
@@ -56,7 +56,7 @@ filename display confirms the choice, with no client-side JavaScript.
 - Generic failure text: "those credentials do not match", never "no such user", which
   is an account-enumeration oracle.
 
-### P3 — administration
+### P3 — administration ✅ done (ADR 0025)
 Users, case assignments, grants, clearance. Each action appends an audit row.
 
 **Administrative capability is a policy decision, never `if user.is_admin`.** CLAUDE.md
@@ -64,7 +64,7 @@ invariant 3 forbids the hand-rolled check by name. A new policy `ordin.admin` an
 predicate carry it, unit-tested with no app running, and every decision logs the policy
 ID that made it — exactly as case access already does.
 
-### P4 — search
+### P4 — search ✅ done (ADR 0026)
 - A search box that reaches cases, parties and document content.
 - Postgres full-text over `ocr_text`, the retrieval path CLAUDE.md already decided.
 - **The authorization predicate goes inside the query** (invariant 1), and snippets are
@@ -73,14 +73,16 @@ ID that made it — exactly as case access already does.
   (threat VIC-01, `infra/disclosure.py`). This is the single most dangerous slice in the
   plan for that reason, and it gets its own Sentinel scenario.
 
-### P5 — deployment
+### P5 — deployment ✅ done (ADR 0027)
 - `docker-compose.prod.yml`: no bind mounts, no dev secrets, restart policies,
   healthchecks, migrations on boot, a reverse proxy terminating TLS.
 - Secrets from the environment, generated not defaulted; the app refuses to start in
   production with a development secret.
 - A cloud target for a submittable URL, with its constraints stated honestly: free tiers
   sleep, and Tesseract plus PyMuPDF make a large image.
-- Backup and restore of the Postgres volume, written down and actually run once.
+- Backup and restore of the database and the blob store, as scripts that run rather
+  than a sentence about backups. See the gap below: `restore.sh` has not yet been
+  replayed onto a scratch host, and until it has, AR-18's second half stands.
 
 ## Invariants this plan could plausibly violate
 
@@ -106,6 +108,26 @@ management".
 
 ## Order
 
-P1 done. Then P2, P3, P4, P5 — auth before administration because administration has
-nothing to administer without accounts, and search last among the features because it is
-the one most likely to leak and deserves the most attention.
+All five landed, in that order: auth before administration because administration has
+nothing to administer without accounts, and search late because it is the one most likely
+to leak and deserved the most attention.
+
+## Known gaps, named rather than left implicit
+
+- **Placing an account is not on the audit chain.** Invariant 4 fixes a row's shape
+  around a case, and placement belongs to no case. It is in the structured log. Closing
+  this properly needs a second, case-less audit stream with its own chain — a real
+  decision, not an oversight to fix quietly.
+- **The administrator is global.** They see every case reference (AR-19). Scoping the
+  administrative post to its own organization would bound that with the dimension
+  everything else already uses, and is cheap.
+- **No password reset.** An account locked out of its password needs an administrator to
+  set a new one, and there is no screen for it — only `tasks.py admin`, which works for
+  administrators and not for anybody else.
+- **No session revocation list.** Suspending an account takes effect on its next request
+  because `require_subject` re-resolves from the database every time, which covers the
+  case that matters. There is no way to end one *specific* session.
+- **Search does not cover extracted field values**, deliberately (ADR 0026), so a search
+  for a complainant's name finds the narrative and not the labelled field.
+- **`restore.sh` has not been run against a real backup on a scratch host.** Until it
+  has, AR-18's second half stands.

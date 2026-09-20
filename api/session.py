@@ -48,6 +48,7 @@ class SubjectOut(BaseModel):
     organization_id: str
     jurisdiction_id: str
     clearance_level: int
+    is_administrative: bool = False
     provider: str = "SimulatedSubjectProvider"
     maturity: str = "mvp"
 
@@ -130,7 +131,7 @@ async def current_session(
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                sa.select(app_user.c.display_name, post.c.title)
+                sa.select(app_user.c.display_name, post.c.title, post.c.is_administrative)
                 .select_from(app_user.join(post, post.c.id == app_user.c.post_id))
                 .where(app_user.c.id == subject.user_id)
             )
@@ -142,4 +143,7 @@ async def current_session(
         organization_id=subject.organization_id,
         jurisdiction_id=subject.jurisdiction_id,
         clearance_level=subject.clearance_level,
+        # From the post, resolved server-side like every other dimension. The web
+        # tier uses it to show a link; the API decides the access by policy.
+        is_administrative=subject.post_is_administrative,
     )

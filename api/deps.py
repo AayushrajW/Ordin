@@ -15,11 +15,12 @@ a body. `tests/test_api_authorization.py` asserts that by sending those headers 
 watching them be ignored.
 """
 import logging
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 
 from domain.policy import Policy
-from domain.subject import Subject
+from domain.subject import CaseFacts, Subject
 from infra.authz import load_subject
 from infra.subject_provider import COOKIE_NAME, SimulatedSubjectProvider
 
@@ -54,4 +55,46 @@ async def require_subject(request: Request) -> Subject:
     if subject is None or not subject.is_active:
         # A deleted or suspended account presents a valid signature and no subject.
         raise HTTPException(status_code=401, detail="session_required")
+    return subject
+
+
+# A case the administrative policy never reads. The evaluator is case-scoped by
+# construction; `ordin.admin` names no predicate that touches the resource, and a test
+# asserts that. Passing a real case here would imply administration is decided per case,
+# which it is not.
+_NO_CASE = CaseFacts(
+    case_id="00000000-0000-0000-0000-000000000000",
+    organization_id="00000000-0000-0000-0000-000000000000",
+    jurisdiction_id="00000000-0000-0000-0000-000000000000",
+    is_sealed=False,
+)
+
+
+async def require_admin(request: Request) -> Subject:
+    """Administrative capability, decided by `ordin.admin` and logged with its id.
+
+    Deliberately not a conditional in this file. CLAUDE.md forbids hand-rolled role
+    conditionals anywhere, and an administration surface is where one would otherwise be
+    written — so the same evaluator that decides case access decides this, from a
+    versioned file that is unit-tested with no app running.
+
+    **It grants no case access.** `ordin.admin` allowing does not put a single case in
+    reach: every case route still runs the `ordin.case_read` filter against the same
+    subject, and an administrative post satisfies no rule in it.
+    """
+    subject = await require_subject(request)
+    policy = request.app.state.admin_policy
+    decision = policy.evaluate(subject, _NO_CASE, datetime.now(timezone.utc))
+    if not decision.allowed:
+        log.info(
+            "administration refused",
+            extra={
+                "user_id": subject.user_id,
+                "policy_id": decision.policy_id,
+                "rule_id": decision.rule_id,
+            },
+        )
+        # 404, not 403: whether this system has an administration surface, and whether
+        # you are close to reaching it, are not facts an ordinary account needs.
+        raise HTTPException(status_code=404, detail="not_found")
     return subject

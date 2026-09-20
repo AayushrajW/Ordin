@@ -42,6 +42,7 @@ async def load_subject(conn, user_id: str) -> Subject | None:
                 app_user.c.is_active,
                 post.c.organization_id,
                 post.c.jurisdiction_id,
+                post.c.is_administrative,
             )
             .select_from(app_user.join(post, post.c.id == app_user.c.post_id))
             .where(app_user.c.id == user_id)
@@ -57,6 +58,7 @@ async def load_subject(conn, user_id: str) -> Subject | None:
         clearance_level=row.clearance_level,
         clearance_valid_to=row.clearance_valid_to,
         is_active=row.is_active,
+        post_is_administrative=bool(row.is_administrative),
     )
 
 

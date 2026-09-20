@@ -78,3 +78,67 @@ class Settings(BaseSettings):
         )
 
     version: str = Field(default="0.1.0", exclude=True)
+
+    @property
+    def is_production(self) -> bool:
+        return self.ordin_env.lower() not in ("dev", "development", "test")
+
+    def refuse_unsafe_production(self) -> None:
+        """Stop the process rather than run a deployment on development values.
+
+        Every one of these is a configuration mistake that produces a system which
+        **starts, serves traffic and looks correct**. That is what makes them worth a
+        hard failure: a warning in a log nobody reads is how a placeholder session
+        secret reaches a pilot.
+
+        `ORDIN_SESSION_SECRET` is the sharpest. It signs the session token from which
+        every access decision is resolved, so a known value is not a weak password — it
+        is the ability to mint a session as any account, including an administrative
+        one, without touching the database (threat SESS-01).
+
+        Called from `create_app`, so there is no code path that constructs a production
+        application without passing this.
+        """
+        if not self.is_production:
+            return
+
+        placeholders = {"", "change_me_session_secret", "changeme", "secret", "dev"}
+        problems: list[str] = []
+
+        def reveal(value) -> str:
+            """The secret's text, whether it is a SecretStr or already a plain string.
+
+            `model_copy(update=...)` bypasses validation, so a Settings built that way
+            can hold a bare str where a SecretStr is declared. A security guard that
+            raises AttributeError on the wrong type reports a traceback instead of the
+            real problem, which is the least useful moment for that to happen.
+            """
+            return value.get_secret_value() if hasattr(value, "get_secret_value") else str(value)
+
+        secret = reveal(self.ordin_session_secret)
+        if secret.strip().lower() in placeholders:
+            problems.append(
+                "ORDIN_SESSION_SECRET is unset or still the template value. It signs "
+                "every session token, so a known value mints a session as any account."
+            )
+        elif len(secret) < 32:
+            problems.append(
+                "ORDIN_SESSION_SECRET is shorter than 32 characters. Generate one with "
+                "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+
+        for name, value in (
+            ("ORDIN_APP_PASSWORD", self.ordin_app_password),
+            ("POSTGRES_OWNER_PASSWORD", self.postgres_owner_password),
+        ):
+            text = reveal(value)
+            if not text or text.startswith("change_me"):
+                problems.append(f"{name} is unset or still the template value.")
+
+        if problems:
+            raise RuntimeError(
+                "refusing to start with ORDIN_ENV="
+                f"{self.ordin_env!r} and development configuration:\n  - "
+                + "\n  - ".join(problems)
+                + "\n\nSet these in the environment. See docs/DEPLOYMENT.md."
+            )

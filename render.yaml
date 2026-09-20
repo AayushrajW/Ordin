@@ -1,0 +1,98 @@
+# Render blueprint — a hosted instance, for review.
+#
+#   https://render.com/docs/blueprint-spec
+#
+# **Read docs/DEPLOYMENT.md before using this.** Three constraints are real and are not
+# hidden in a comment nobody reads:
+#
+#  1. The worker is a paid instance type on Render. Without it an upload is accepted,
+#     queued and never processed — the document appears with no extracted fields. That
+#     is visible rather than silent, but it looks broken to anyone who does not know.
+#  2. Free web services sleep after inactivity. On an image carrying Tesseract and its
+#     language data, the cold start is tens of seconds.
+#  3. This contradicts the product's own front page: "no cloud, no model, no telemetry".
+#     A hosted instance is a convenience for review. The deployment story is on-premise,
+#     and saying so is better than letting a reviewer infer otherwise.
+#
+# The session secret and database passwords are `generateValue: true`, so they are
+# created by Render and never exist in this repository. `ORDIN_ENV=production` means
+# `Settings.refuse_unsafe_production` refuses to start if any of them is missing.
+
+databases:
+  - name: ordin-postgres
+    databaseName: ordin
+    # ordin_owner owns the schema; the app role is created by the migration path, not
+    # by db/init/01-roles.sh — Render manages its own database and does not run that
+    # script. See docs/DEPLOYMENT.md: on a managed database, create ordin_app by hand
+    # once, or the two-role separation in ADR 0001 is silently not in force.
+    user: ordin_owner
+    plan: free
+
+services:
+  - type: web
+    name: ordin-web
+    runtime: docker
+    dockerfilePath: ./docker/web.Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: NODE_ENV
+        value: production
+      - key: ORDIN_ENV
+        value: production
+      - key: ORDIN_API_ORIGIN
+        fromService:
+          name: ordin-api
+          type: pserv
+          property: hostport
+          # Rendered as host:port; the scheme is added below via a second var because
+          # Render does not prefix it.
+
+  - type: pserv
+    name: ordin-api
+    runtime: docker
+    dockerfilePath: ./docker/python.Dockerfile
+    dockerContext: .
+    dockerCommand: >
+      sh -c "python -m alembic upgrade head &&
+             python -m uvicorn api.main:app --host 0.0.0.0 --port 8000"
+    plan: starter
+    envVars: &python_env
+      - key: ORDIN_ENV
+        value: production
+      - key: ORDIN_LOG_LEVEL
+        value: INFO
+      - key: ORDIN_SESSION_SECRET
+        generateValue: true
+      - key: POSTGRES_HOST
+        fromDatabase: { name: ordin-postgres, property: host }
+      - key: POSTGRES_PORT
+        fromDatabase: { name: ordin-postgres, property: port }
+      - key: POSTGRES_DB
+        fromDatabase: { name: ordin-postgres, property: database }
+      - key: POSTGRES_OWNER_USER
+        fromDatabase: { name: ordin-postgres, property: user }
+      - key: POSTGRES_OWNER_PASSWORD
+        fromDatabase: { name: ordin-postgres, property: password }
+      # The restricted runtime role. On a managed database this must be created once by
+      # hand — see docs/DEPLOYMENT.md — or it does not exist and the app cannot connect.
+      - key: ORDIN_APP_USER
+        value: ordin_app
+      - key: ORDIN_APP_PASSWORD
+        generateValue: true
+
+  - type: worker
+    name: ordin-worker
+    runtime: docker
+    dockerfilePath: ./docker/python.Dockerfile
+    dockerContext: .
+    # The OCR stage of the image. An api image deliberately has no Tesseract, so that
+    # nobody can call OCR synchronously on a request (ADR 0019).
+    dockerCommand: python -m worker.main
+    # Not free, and this is the constraint that decides whether the hosted instance is
+    # worth having: no worker means no OCR, no extraction, no signing and no anchoring.
+    plan: starter
+    envVars: *python_env

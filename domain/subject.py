@@ -29,6 +29,14 @@ class Subject:
     clearance_valid_to: datetime | None
     is_active: bool = True
 
+    # Administration is a property of the **post**, not of the person (migration 0009).
+    # An office outlives its holder, which is the same reason identity and post are two
+    # dimensions here and not one. Carried on the subject so the policy evaluator can
+    # read it through a predicate: `if user.is_admin` in a route is the hand-rolled
+    # check CLAUDE.md forbids by name, and a column called `is_admin` would only have
+    # moved it into the database.
+    post_is_administrative: bool = False
+
     def clearance_is_current(self, at: datetime) -> bool:
         """Clearance carries its own clock, independent of assignment and grant.
 

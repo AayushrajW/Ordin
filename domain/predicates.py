@@ -75,6 +75,17 @@ def _subject_is_active(s: Subject, c: CaseFacts, at: datetime) -> bool:
     return s.is_active
 
 
+def _post_is_administrative(s: Subject, c: CaseFacts, at: datetime) -> bool:
+    """Does the subject hold an administrative office?
+
+    Reads the post, never the person. An administrative post confers the ability to
+    place other people; it confers **no case access whatsoever**, which is why no rule
+    in ordin.case_read mentions it. Seniority and administration are both ways of
+    saying "important", and neither opens a case you are not designated on.
+    """
+    return s.post_is_administrative
+
+
 REGISTRY: dict[str, Predicate] = {
     "assignment_active": _assignment_active,
     "same_organization": _same_organization,
@@ -85,6 +96,7 @@ REGISTRY: dict[str, Predicate] = {
     "clearance_current": _clearance_current,
     "clearance_permits_sealed": _clearance_permits_sealed,
     "subject_is_active": _subject_is_active,
+    "post_is_administrative": _post_is_administrative,
 }
 
 

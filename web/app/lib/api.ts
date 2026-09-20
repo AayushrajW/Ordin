@@ -28,8 +28,66 @@ export type Subject = {
   display_name: string;
   title: string;
   clearance_level: number;
+  /** From the post, resolved server-side. Shows a link; decides nothing (threat EXT-06). */
+  is_administrative: boolean;
   provider: string;
   maturity: string;
+}
+
+export type AdminAccount = {
+  user_id: string;
+  display_name: string;
+  email: string | null;
+  is_active: boolean;
+  placed: boolean;
+  post_title: string | null;
+  organization: string | null;
+  clearance_level: number;
+  is_administrative: boolean;
+  last_login_at: string | null;
+  locked: boolean;
+}
+
+export type AdminPost = {
+  post_id: string;
+  title: string;
+  organization: string;
+  jurisdiction: string;
+  is_administrative: boolean;
+}
+
+export type AdminCase = {
+  case_id: string;
+  reference: string;
+  state: string;
+  is_sealed: boolean;
+}
+
+export type CurrentAccess = {
+  designations: { reference: string; display_name: string; since: string | null }[];
+  grants: {
+    grant_id: string;
+    reference: string;
+    display_name: string;
+    purpose: string;
+    expires_at: string;
+  }[];
+};
+
+export type SearchResults = {
+  query: string;
+  cases: { case_id: string; reference: string; state: string; is_sealed: boolean }[];
+  documents: {
+    document_id: string;
+    version_id: string;
+    title: string;
+    case_id: string;
+    case_reference: string;
+    snippet: string;
+  }[];
+  /** A reachable case was excluded from the content search: they get derivatives only. */
+  content_withheld: boolean;
+  note: string | null;
 };
 
 export type DemoSubject = { user_id: string; display_name: string; title: string };
@@ -188,6 +246,30 @@ export async function post<T>(path: string, body?: unknown): Promise<WriteResult
     if (response.status === 401) return { ok: false, reason: "Your session has ended." };
     if (response.status === 404)
       return { ok: false, reason: "Not available to you." };
+    if (!response.ok) return { ok: false, reason: "The request was refused." };
+    return { ok: true, data: (await response.json()) as T };
+  } catch {
+    return { ok: false, reason: "The API did not respond." };
+  }
+}
+
+/**
+ * DELETE with a body.
+ *
+ * Ending a designation is a DELETE that names which one, and the row is closed rather
+ * than removed — `api/admin.py` sets `valid_to` instead of deleting, because an
+ * assignment that once existed is part of the record of who could see what and when.
+ */
+export async function del<T>(path: string, body?: unknown): Promise<WriteResult<T>> {
+  try {
+    const response = await fetch(`${API_ORIGIN}${path}`, {
+      method: "DELETE",
+      headers: { ...(await sessionHeader()), "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (response.status === 401) return { ok: false, reason: "Your session has ended." };
+    if (response.status === 404) return { ok: false, reason: "Not available to you." };
     if (!response.ok) return { ok: false, reason: "The request was refused." };
     return { ok: true, data: (await response.json()) as T };
   } catch {

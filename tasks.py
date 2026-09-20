@@ -371,8 +371,11 @@ def cmd_demo() -> int:
     # seed.py TRUNCATEs app_user, which takes the administrator with it. Put it back
     # when .env says who it is, so `demo` does not quietly lock the operator out of
     # their own system.
-    if code == 0 and os.environ.get("ORDIN_ADMIN_EMAIL") and os.environ.get("ORDIN_ADMIN_PASSWORD"):
-        run([PY, "admin.py"], check=False)
+    if code == 0:
+        # --if-configured: exits quietly when no administrator is set, so `demo` stays
+        # one command on a clean clone. admin.py reads .env itself, because a value
+        # there is invisible to os.environ.
+        run([PY, "admin.py", "--if-configured"], check=False)
     return code
 
 

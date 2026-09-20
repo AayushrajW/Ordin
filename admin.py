@@ -26,6 +26,7 @@ exists to refuse.
 import argparse
 import asyncio
 import os
+import pathlib
 import sys
 import uuid
 
@@ -130,14 +131,40 @@ async def ensure_admin(
     return user_id
 
 
+def configured(name: str, default: str | None = None) -> str | None:
+    """A value from the environment, falling back to `.env`.
+
+    `.env` is read by pydantic-settings, which does not export into `os.environ` — so a
+    value sitting in that file is invisible to `os.environ.get`. That is exactly how the
+    first version of this silently failed to restore the administrator after
+    `tasks.py demo`, reporting nothing at all.
+    """
+    if os.environ.get(name):
+        return os.environ[name]
+    env_file = pathlib.Path(__file__).resolve().parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == name and value.strip():
+                return value.strip()
+    return default
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create or update an administrator.")
-    parser.add_argument("--email", default=os.environ.get("ORDIN_ADMIN_EMAIL"))
-    parser.add_argument("--password", default=os.environ.get("ORDIN_ADMIN_PASSWORD"))
-    parser.add_argument("--name", default=os.environ.get("ORDIN_ADMIN_NAME", "Administrator"))
+    parser.add_argument("--email", default=configured("ORDIN_ADMIN_EMAIL"))
+    parser.add_argument("--password", default=configured("ORDIN_ADMIN_PASSWORD"))
+    parser.add_argument("--name", default=configured("ORDIN_ADMIN_NAME", "Administrator"))
+    parser.add_argument(
+        "--if-configured",
+        action="store_true",
+        help="Exit quietly when no administrator is configured. Used by `tasks.py demo`.",
+    )
     args = parser.parse_args(argv)
 
     if not args.email or not args.password:
+        if args.if_configured:
+            return 0
         print("  usage: python tasks.py admin --email <address> --password <password>")
         print("  or set ORDIN_ADMIN_EMAIL and ORDIN_ADMIN_PASSWORD in .env, which also")
         print("  lets `python tasks.py demo` restore the account after it reseeds.")

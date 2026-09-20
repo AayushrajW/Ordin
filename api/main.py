@@ -15,12 +15,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from pathlib import Path
 
+from api.admin import router as admin_router
 from api.auth import router as auth_router
 from api.cases import router as cases_router
 from api.config import Settings
 from api.documents import router as documents_router
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
+from api.search import router as search_router
 from api.sentinel_routes import router as sentinel_router
 from api.security import SecurityMiddleware
 from api.session import router as session_router
@@ -32,6 +34,10 @@ log = logging.getLogger("ordin.api")
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    # Before anything else. A deployment running on the template session secret starts,
+    # serves traffic and looks correct, which is exactly why this raises rather than
+    # warns (threat SESS-01).
+    settings.refuse_unsafe_production()
     configure_logging(settings.ordin_log_level)
 
     @asynccontextmanager
@@ -69,7 +75,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Loaded once at startup, and deliberately NOT lazily per request: a malformed
     # policy must stop the process rather than deny every request at runtime while
     # looking like an outage (domain/policy.py raises PolicyError at load).
-    app.state.policy = load_policy(Path(__file__).resolve().parents[1] / "policies" / "case_read.v1.yaml")
+    policies = Path(__file__).resolve().parents[1] / "policies"
+    app.state.policy = load_policy(policies / "case_read.v1.yaml")
+    # Administrative capability is decided by policy too, for the same reason and
+    # with the same failure mode: a bad file stops the process rather than denying
+    # every request while looking like an outage.
+    app.state.admin_policy = load_policy(policies / "admin.v1.yaml")
     # One store, constructed once. A relative root resolves against the project
     # root so the api and the worker address the same bytes without either owning
     # the path (the worker builds its own store from the same setting).
@@ -83,10 +94,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # synchronously on a request. The upload route validates and versions; the worker
     # runs the thread (worker/intake_queue.py).
 
+    app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(session_router)
     app.include_router(cases_router)
     app.include_router(documents_router)
+    app.include_router(search_router)
     app.include_router(sentinel_router)
 
     @app.get("/health")

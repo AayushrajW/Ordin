@@ -19,11 +19,12 @@ import {
   IconChevron,
   IconLogout,
   IconPulse,
+  IconSearch,
   IconShield,
   Seal,
 } from "./icons";
 
-type Nav = "cases" | "sentinel" | "health";
+type Nav = "cases" | "search" | "sentinel" | "health" | "admin";
 
 export function initials(name: string): string {
   const parts = name.replace(/^(SI|SHO|PP|DSP|ASI|Dr|Ms|Mr)\s+/i, "").split(/\s+/);
@@ -103,8 +104,14 @@ export default async function Shell({
             Workspace
           </p>
           <NavLink href="/" label="Case files" icon={<IconCases />} active={active === "cases"} />
+          <NavLink href="/search" label="Search" icon={<IconSearch />} active={active === "search"} />
           <NavLink href="/sentinel" label="Sentinel" icon={<IconShield />} active={active === "sentinel"} />
           <NavLink href="/health" label="System health" icon={<IconPulse />} active={active === "health"} />
+          {/* Shown from the post, resolved server-side. Hiding it is courtesy, not
+              control: the API answers a non-administrator with 404 either way. */}
+          {subject?.is_administrative && (
+            <NavLink href="/admin" label="Administration" icon={<IconShield />} active={active === "admin"} />
+          )}
         </nav>
 
         <div className="relative mt-6 px-5 lg:mt-auto">
