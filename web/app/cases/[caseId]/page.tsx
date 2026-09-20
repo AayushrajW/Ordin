@@ -176,9 +176,22 @@ export default async function CasePage({
                     then runs OCR, extraction, signing and anchoring.
                   </p>
                 </div>
-                <label className="btn-quiet cursor-pointer">
-                  <input type="file" name="file" accept="application/pdf,image/png,image/jpeg,image/tiff,image/bmp" required className="max-w-[12rem] text-xs file:hidden" />
-                </label>
+                {/* The native control, styled rather than hidden. `file:hidden` left no
+                    visible way to open the picker, which made a working upload look
+                    broken. Styling `::file-selector-button` keeps the browser's own
+                    filename display, so the chosen file is confirmed without any
+                    client-side JavaScript. */}
+                <input
+                  type="file"
+                  name="file"
+                  accept="application/pdf,image/png,image/jpeg,image/tiff,image/bmp"
+                  required
+                  aria-label="Choose a document or photograph to file"
+                  className="max-w-[16rem] cursor-pointer text-xs text-ink-600
+                             file:mr-3 file:cursor-pointer file:rounded-full file:border-0
+                             file:bg-ink-900 file:px-4 file:py-2 file:text-xs
+                             file:font-semibold file:text-white hover:file:bg-ink-700"
+                />
                 <button type="submit" className="btn-primary">
                   <IconUpload className="h-4 w-4" /> Upload
                 </button>

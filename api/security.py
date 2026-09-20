@@ -89,7 +89,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         path, method = request.url.path, request.method
         token = request.cookies.get(COOKIE_NAME)
         who = _fingerprint(token) if token else f"addr:{client}"
-        if path == "/session" and method == "POST":
+        # Minting a session, by either route. `/auth/login` is the one endpoint an
+        # unauthenticated caller can use to guess, so it is keyed on the address and
+        # shares the tightest bucket. `infra/accounts.py` also counts failures on the
+        # account row, because this limiter is per process and resets on restart.
+        if method == "POST" and path in ("/session", "/auth/login", "/auth/signup"):
             return self.sessions, f"addr:{client}"
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             return self.writes, who

@@ -199,6 +199,25 @@ export async function currentSubject(): Promise<Subject | null> {
   return get<Subject>("/session");
 }
 
+export type AuthStatus = {
+  authenticated: boolean;
+  placed: boolean;
+  display_name: string | null;
+  awaiting_placement: boolean;
+};
+
+/**
+ * Who this cookie is, whether or not they can open anything.
+ *
+ * `/session` requires a Subject and therefore refuses an account that holds no post.
+ * That is right for every other route and useless immediately after signing in, when
+ * the person needs to be told they are awaiting placement rather than returned to the
+ * login form for ever.
+ */
+export async function authStatus(): Promise<AuthStatus | null> {
+  return get<AuthStatus>("/auth/status");
+}
+
 export async function apiOrigin(): Promise<string> {
   return API_ORIGIN;
 }

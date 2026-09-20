@@ -4,6 +4,10 @@ This is **not a login**. There is no credential: anyone who can reach the endpoi
 request a session as any seeded identity. That is accepted risk AR-1, and the UI copy
 says so rather than implying otherwise.
 
+The real one is `api/auth.py`, which checks a password and issues the same token. This
+switcher now refuses outside `ORDIN_ENV=dev`, because in a deployment it would be a
+complete authentication bypass sitting next to a working authentication system.
+
 What it does provide is the property the authorization model needs: the subject is
 carried in a token the *server* signed, so a caller cannot name themselves. The
 difference between that and a role dropdown is the difference between slice 3 meaning
@@ -22,6 +26,19 @@ from infra.subject_provider import COOKIE_NAME, DEFAULT_LIFETIME
 from infra.tables import app_user, post
 
 router = APIRouter(tags=["session"])
+
+
+def _dev_only(request: Request) -> None:
+    """The specimen switcher must not exist outside development.
+
+    It issues a session for any seeded identity with no credential (AR-1). That is
+    acceptable in a demo and is a complete authentication bypass in a deployment, so
+    the endpoints are refused rather than merely hidden when `ORDIN_ENV` is not `dev`.
+    Hiding them from the UI would leave them reachable by anyone who reads this file,
+    which is everyone: the repository is public.
+    """
+    if request.app.state.settings.ordin_env != "dev":
+        raise HTTPException(status_code=404, detail="not_found")
 
 
 class SubjectOut(BaseModel):
@@ -46,6 +63,7 @@ async def demo_subjects(request: Request):
     Deliberately labelled. A judge looking at this screen should be able to tell it
     is a specimen switcher and not an authentication system.
     """
+    _dev_only(request)
     engine = request.app.state.engine
     async with engine.connect() as conn:
         rows = (
@@ -70,6 +88,7 @@ async def demo_subjects(request: Request):
 
 @router.post("/session")
 async def open_session(body: SwitchRequest, request: Request, response: Response):
+    _dev_only(request)
     engine = request.app.state.engine
     async with engine.connect() as conn:
         exists = (

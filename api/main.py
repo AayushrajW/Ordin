@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from pathlib import Path
 
+from api.auth import router as auth_router
 from api.cases import router as cases_router
 from api.config import Settings
 from api.documents import router as documents_router
@@ -82,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # synchronously on a request. The upload route validates and versions; the worker
     # runs the thread (worker/intake_queue.py).
 
+    app.include_router(auth_router)
     app.include_router(session_router)
     app.include_router(cases_router)
     app.include_router(documents_router)
