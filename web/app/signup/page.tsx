@@ -13,6 +13,7 @@
  */
 import Link from "next/link";
 
+import PasswordField from "../components/PasswordField";
 import { Seal } from "../components/icons";
 import { MIN_PASSWORD } from "../lib/constants";
 
@@ -86,23 +87,11 @@ export default async function SignupPage({
               className="field w-full"
             />
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-ink-500">
-              Password
-            </span>
-            <input
-              type="password"
-              name="password"
-              required
-              minLength={MIN_PASSWORD}
-              autoComplete="new-password"
-              className="field w-full"
-            />
-            <span className="mt-1.5 block text-[0.7rem] leading-relaxed text-ink-400">
-              At least {MIN_PASSWORD} characters. Length is the only rule — required
-              symbols and capitals are known to produce predictable passwords.
-            </span>
-          </label>
+          <PasswordField
+            autoComplete="new-password"
+            minLength={MIN_PASSWORD}
+            hint={`At least ${MIN_PASSWORD} characters. Length is the only rule — required symbols and capitals are known to produce predictable passwords.`}
+          />
           <button type="submit" className="btn-primary w-full justify-center">
             Request an account
           </button>

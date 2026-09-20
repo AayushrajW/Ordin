@@ -367,7 +367,18 @@ def cmd_demo() -> int:
         return 1
     if cmd_seed() != 0:
         return 1
-    return run([PY, "demo.py"], check=False).returncode
+    code = run([PY, "demo.py"], check=False).returncode
+    # seed.py TRUNCATEs app_user, which takes the administrator with it. Put it back
+    # when .env says who it is, so `demo` does not quietly lock the operator out of
+    # their own system.
+    if code == 0 and os.environ.get("ORDIN_ADMIN_EMAIL") and os.environ.get("ORDIN_ADMIN_PASSWORD"):
+        run([PY, "admin.py"], check=False)
+    return code
+
+
+def cmd_admin() -> int:
+    """Create or update an administrator. The bootstrap every admin system needs."""
+    return run([PY, "admin.py", *sys.argv[2:]], check=False).returncode
 
 
 def cmd_worker() -> int:
@@ -637,6 +648,7 @@ COMMANDS = {
     "migrate": cmd_migrate,
     "worker": cmd_worker,
     "seed": cmd_seed,
+    "admin": cmd_admin,
     "fixtures": cmd_fixtures,
     "sentinel": cmd_sentinel,
     "evaluate": cmd_evaluate,

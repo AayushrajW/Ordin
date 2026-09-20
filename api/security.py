@@ -8,7 +8,8 @@ safe on its own. `Cache-Control: no-store` matters most: every response here is 
 product of an authorization decision made *for this request*, and a cached copy outlives
 the session that was entitled to it.
 
-**Rate limits.** Accepted risk AR-8 was "no rate limiting at all". This narrows it:
+**Rate limits.** Accepted risk AR-9 was "no rate limiting, lockout or user-enumeration
+protection". This narrows it:
 
   minting a session     30 per minute per client address
   writes                120 per minute per session
@@ -19,7 +20,7 @@ the session that was entitled to it.
 Sliding window, in process memory. **Stated limits of that**: per api process, not per
 deployment; reset on restart; and the web tier calls the API from one address, so the
 per-address limit on session minting is effectively global behind it. That is a real
-narrowing of AR-8 for this build, not a closing of it. A production deployment puts this
+narrowing of AR-9 for this build, not a closing of it. A production deployment puts this
 in front of the api, keyed on the real client.
 
 Keys are hashes, never raw tokens: a limiter's memory must not become a session store

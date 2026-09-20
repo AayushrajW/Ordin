@@ -18,11 +18,31 @@ language packs. Node 20+ if you want the web tier.
 python tasks.py setup     # venv, dependencies, .env, fixtures
 python tasks.py doctor    # says what is still missing, and what to do about it
 python tasks.py demo      # fresh database, seed, and documents through the real pipeline
+python tasks.py admin --email you@example.org --password '<at least 12 characters>'
 python tasks.py up        # postgres in docker; api, worker and web natively
 ```
 
-Then open **http://127.0.0.1:3001** and pick a specimen identity. `demo` is what turns
-a correct-but-empty case list into something worth looking at.
+Then open **http://127.0.0.1:3001**.
+
+**To sign in there are two doors, and they are not the same door.**
+
+`/login` is real: an email, a password, Argon2id, lockout on the account row. Signing in
+grants *nothing* on its own — a new account holds no post, so no organization, no
+jurisdiction and no clearance, and every case query comes back empty until an
+administrator places it. That is the system working, not a fault.
+
+`/specimen` is the identity switcher, which checks no credential. It is how you see
+"same URL, three identities" in one click, and the API **refuses its endpoints entirely**
+unless `ORDIN_ENV=dev` — hiding it from the UI would not be a control, because this
+repository is public.
+
+`tasks.py admin` closes the bootstrap hole every administration system has: the screen
+that creates administrators requires an administrator. Put the same values in `.env` as
+`ORDIN_ADMIN_EMAIL` / `ORDIN_ADMIN_PASSWORD` and `demo` will restore the account after it
+reseeds, rather than locking you out of your own system. An administrator holds an
+administrative *post*, carries no case designation, and therefore reads no evidence.
+
+`demo` is what turns a correct-but-empty case list into something worth looking at.
 
 `doctor` works on a machine where nothing is set up yet — that is the situation it
 exists for. If something is wrong it tells you which thing.
@@ -55,21 +75,27 @@ something you watch pass rather than something we assert.
 | Verification UI | draft fields beside the scan; the human commit that writes `verified` |
 | Intake | PDFs **and photographs** — re-encoded, so EXIF and GPS never reach the store |
 | Voice | reads a screen aloud; never speaks a name; cannot commit or redact |
-| Sentinel | 15 scenarios, rendered on a page and re-run live on every load |
+| Accounts | password login (Argon2id); signing in grants nothing until an administrator places you |
+| Sentinel | 19 scenarios, rendered on a page and re-run live on every load |
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-374 tests. `python tasks.py test`.
+398 tests. `python tasks.py test`.
 
 ---
 
 ## What is deliberately not built
 
 Read `docs/THREAT-MODEL.md` before believing anything above. Its **accepted risks**
-section is the honest inventory: no real authentication, no rate limiting, no
-independent witness for the anchor chain, no malware scanning, and a privileged
-insider defeats most controls in the document. Each is recorded with what would fix
-it.
+section is the honest inventory: no independent witness for the anchor chain, no
+malware scanning, no entity recognition, and a privileged insider defeats most
+controls in the document. Each is recorded with what would fix it.
+
+Two entries there are now narrower than when they were written. **Authentication is
+real** (ADR 0024) — accepted risk AR-1 described a switcher that checked no
+credential, and that switcher is now refused outside `ORDIN_ENV=dev`. **Rate limiting
+exists** (AR-9), narrowed rather than closed: it is per api process and resets on
+restart, which `api/security.py` states about itself.
 
 Three claims in particular are narrower than they look, and the code says so where
 it makes them:
@@ -104,5 +130,6 @@ in this repository.
 | `docs/PLAN.md` | build order, budget, and what was cut |
 | `docs/THREAT-MODEL.md` | 8 attacker classes, invariant coverage, accepted risks |
 | `docs/STATUS.md` | where the build actually is, written for a cold start |
-| `docs/adr/` | 12 decisions, each with its consequences |
+| `docs/adr/` | 24 decisions, each with its consequences |
+| `docs/PLAN-PRODUCT.md` | the work from demo to deployable, and what was actually true |
 | `docs/modules/` | one page per landed slice, with the questions a judge will ask |

@@ -2,7 +2,7 @@
 
 ## Context
 The build verified integrity only when asked, rendered pages identically for everyone,
-recorded no reads, had no rate limiting (accepted risk AR-8), and relied on the web tier
+recorded no reads, had no rate limiting (accepted risk AR-9), and relied on the web tier
 for response headers the API itself should carry.
 
 ## Decision
@@ -30,7 +30,7 @@ for response headers the API itself should carry.
 - The audit trail grows with every view. That is the intended cost of access logging.
 - **Stated limits:** the rate limiter is per api process and resets on restart, and behind
   the web tier every browser shares one address, so the session-mint limit is effectively
-  global there. AR-8 is narrowed for this build, not closed; production puts limiting in
+  global there. AR-9 is narrowed for this build, not closed; production puts limiting in
   front of the api keyed on the real client.
 - React's development build needs `eval`; the CSP grants it only when `NODE_ENV` is
   development, so the demo path (`next start`) ships the strict policy.

@@ -56,9 +56,20 @@ def check_quality(password: str) -> None:
         raise PasswordRejected(f"must be at most {MAX_LENGTH} characters")
 
 
-def hash_password(password: str) -> str:
-    """Hash for storage. The salt is generated inside the library, per hash."""
-    check_quality(password)
+def hash_password(password: str, *, enforce_quality: bool = True) -> str:
+    """Hash for storage. The salt is generated inside the library, per hash.
+
+    `enforce_quality=False` exists for exactly one caller: the operator bootstrapping
+    the first administrator from the command line, who has shell access to the machine
+    and the database already and is not a threat this check defends against. It is a
+    named argument rather than a second function so that every use of it is greppable,
+    and `admin.py` prints a warning when it takes that path.
+
+    No route ever passes it. Signup and any future password change go through the
+    check.
+    """
+    if enforce_quality:
+        check_quality(password)
     return _HASHER.hash(password)
 
 
