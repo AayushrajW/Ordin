@@ -33,6 +33,7 @@ What this does NOT do: scan for malware. That is `MalwareScanner`, a declared st
 are a phishing page passes here, correctly — it carries no executable content.
 """
 import re
+import struct
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -133,8 +134,14 @@ IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
     (b"BM", "bmp"),
 )
 
-# A 12-megapixel phone photo is ~12M; this stops a small file that decompresses into
-# gigabytes of pixmap from being rasterised at all (the image equivalent of a zip bomb).
+# A 12-megapixel phone photo is ~12M. This is the image equivalent of a zip bomb:
+# MAX_BYTES caps the upload at 25 MB and does not bound the DECODED size at all,
+# because deflate reduces a uniform field to almost nothing. 25 MB of PNG is billions
+# of pixels and gigabytes of pixmap. The cap is therefore applied to the dimensions
+# the header DECLARES, before a decoder is handed the bytes - see
+# `declared_pixel_size`. Measuring after decoding measures the damage instead of
+# preventing it (threat OPS-03: an unbounded worker gets the OOM killer to take
+# postgres down with it).
 MAX_PIXELS = 80_000_000
 
 # The page is sized so one image pixel is one pixel at the OCR path's raster density.
@@ -158,6 +165,103 @@ def sniff(data: bytes) -> str:
     raise UploadRejected(RejectionCode.NOT_A_PDF)
 
 
+def declared_pixel_size(data: bytes) -> tuple[int, int] | None:
+    """Width and height as the header declares them, decoding no pixels at all.
+
+    Every format accepted by `sniff` is required by its own specification to state its
+    dimensions in a fixed-position header (TIFF in the first IFD, tags 256 and 257),
+    so this can always be answered for a well-formed file without allocating a pixmap.
+
+    `None` means the dimensions could not be read. That is not an exotic-but-valid
+    file: `sniff` has already matched a known image magic, so a header that will not
+    give up its size is malformed, and the caller refuses it.
+
+    Deliberately hand-written. `fitz.image_profile` is the obvious tool and is broken
+    in PyMuPDF 1.26.7 - `fz_recognize_image_format` rejects the bytes object its own
+    binding passes it, on every input - and a decompression-bomb control that cannot
+    run is worse than none, because it reads as present.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(data) >= 24 and data[12:16] == b"IHDR":
+            return struct.unpack(">II", data[16:24])
+        return None
+
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        # Logical screen descriptor, immediately after the 6-byte signature.
+        return struct.unpack("<HH", data[6:10]) if len(data) >= 10 else None
+
+    if data.startswith(b"BM"):
+        if len(data) < 26:
+            return None
+        header_size = struct.unpack("<I", data[14:18])[0]
+        if header_size >= 40:  # BITMAPINFOHEADER and every later variant
+            width, height = struct.unpack("<ii", data[18:26])
+        elif header_size == 12 and len(data) >= 22:  # BITMAPCOREHEADER
+            width, height = struct.unpack("<hh", data[18:22])
+        else:
+            return None
+        # A negative height is legal and means the rows are stored top-down.
+        return abs(width), abs(height)
+
+    if data.startswith(b"\xff\xd8\xff"):
+        # Walk the marker segments to the frame header. The size is not at a fixed
+        # offset in JPEG: any number of APPn/DQT/DRI segments may precede SOFn.
+        i, n = 2, len(data)
+        while i + 9 < n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker == 0xFF:  # fill byte
+                i += 1
+                continue
+            if marker == 0x01 or 0xD0 <= marker <= 0xD8:  # standalone, no length
+                i += 2
+                continue
+            if marker in (0xD9, 0xDA):  # end of image, or entropy-coded data begins
+                return None
+            length = struct.unpack(">H", data[i + 2:i + 4])[0]
+            # SOF0-SOF15 carry the frame size. C4 (DHT), C8 (JPG) and CC (DAC) share
+            # the range and do not.
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                height, width = struct.unpack(">HH", data[i + 5:i + 9])
+                return width, height
+            if length < 2:
+                return None
+            i += 2 + length
+        return None
+
+    if data.startswith(b"II*\x00") or data.startswith(b"MM\x00*"):
+        endian = "<" if data.startswith(b"II") else ">"
+        if len(data) < 8:
+            return None
+        offset = struct.unpack(endian + "I", data[4:8])[0]
+        if offset + 2 > len(data):
+            return None
+        entries = struct.unpack(endian + "H", data[offset:offset + 2])[0]
+        width = height = None
+        for index in range(entries):
+            at = offset + 2 + index * 12
+            if at + 12 > len(data):
+                break
+            tag, kind = struct.unpack(endian + "HH", data[at:at + 4])
+            if tag not in (256, 257):
+                continue
+            if kind == 3:  # SHORT, in the first half of the value field
+                value = struct.unpack(endian + "H", data[at + 8:at + 10])[0]
+            elif kind == 4:  # LONG
+                value = struct.unpack(endian + "I", data[at + 8:at + 12])[0]
+            else:
+                return None
+            if tag == 256:
+                width = value
+            else:
+                height = value
+        return (width, height) if width and height else None
+
+    return None
+
+
 def pdf_from_image(data: bytes) -> bytes:
     """Wrap a photograph in a PDF page, re-encoding the pixels.
 
@@ -175,12 +279,24 @@ def pdf_from_image(data: bytes) -> bytes:
     """
     import fitz
 
+    # Before the decoder sees the bytes. `fitz.Pixmap(data)` allocates the whole
+    # pixmap, so a cap tested afterwards has already paid the cost it exists to avoid.
+    declared = declared_pixel_size(data)
+    if declared is None or declared[0] <= 0 or declared[1] <= 0:
+        # sniff() already matched a known image magic, so this is malformed rather
+        # than merely unusual. Fail closed (invariant 2).
+        raise UploadRejected(RejectionCode.UNREADABLE)
+    if declared[0] * declared[1] > MAX_PIXELS:
+        raise UploadRejected(RejectionCode.TOO_MANY_PIXELS)
+
     try:
         pixmap = fitz.Pixmap(data)
     except Exception as exc:  # noqa: BLE001
         raise UploadRejected(RejectionCode.UNREADABLE) from exc
 
     try:
+        # Kept as well: the header is a claim, and this is the measurement. They
+        # agree for every well-formed file, and the cheap check is not the last word.
         if pixmap.width * pixmap.height > MAX_PIXELS:
             raise UploadRejected(RejectionCode.TOO_MANY_PIXELS)
         if pixmap.alpha:

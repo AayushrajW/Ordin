@@ -9,6 +9,9 @@ The last of those is the one that would be missed. Sanitising on the way in and 
 storing, signing and anchoring the original upload produces a system that is provably
 clean and demonstrably serving the file with the JavaScript in it.
 """
+import struct
+import zlib
+
 import pytest
 
 from infra.blobstore import sha256_bytes
@@ -314,8 +317,14 @@ def test_an_enormous_image_is_refused_before_it_is_rasterised():
     page.insert_text((10, 20), "x")
     huge = page.get_pixmap(dpi=340).tobytes("png")
     doc.close()
-    pixels = fitz.Pixmap(huge)
-    if pixels.width * pixels.height <= MAX_PIXELS:
+    # Read the size from the header rather than decoding it. Building the pixmap here
+    # just to size it allocated ~267 MB inside the test, on the 8 GB laptop whose
+    # memory this cap exists to defend.
+    from infra.intake import declared_pixel_size
+
+    declared = declared_pixel_size(huge)
+    assert declared is not None, "specimen header unreadable"
+    if declared[0] * declared[1] <= MAX_PIXELS:
         pytest.skip("could not build an image over the pixel cap cheaply")
     with pytest.raises(UploadRejected) as raised:
         pdf_from_image(huge)
@@ -331,3 +340,60 @@ def test_a_photograph_survives_the_sanitiser_intact_enough_to_read():
     result = sanitise(_page_image("Complainant Name: Rukmini Deshmukh"))
     outcome = TesseractOcr(languages="eng").extract(result.data)
     assert "Rukmini" in outcome.text, outcome.text[:200]
+
+
+def _declared_size_image(kind: str, width: int, height: int) -> bytes:
+    """A header claiming `width` x `height`, with no pixel data behind it.
+
+    This is the discriminator the test below needs. A real decompression bomb is a
+    *valid* image, so the only thing that can refuse one cheaply is reading the
+    declared dimensions before decoding. These specimens are deliberately
+    undecodable: an implementation that decodes first reports UNREADABLE, one that
+    reads the header first reports TOO_MANY_PIXELS. Nothing large is ever allocated,
+    so the test is safe to run on the 8 GB laptop it exists to protect.
+    """
+    if kind == "png":
+        ihdr = b"IHDR" + struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + ihdr
+            + struct.pack(">I", zlib.crc32(ihdr))
+        )
+    if kind == "gif":
+        # GIF dimensions are 16-bit, so 65535 square is the largest it can claim.
+        return b"GIF89a" + struct.pack("<HH", width, height) + b"\x00\x00\x00"
+    if kind == "bmp":
+        return (
+            b"BM"
+            + struct.pack("<IHHI", 0, 0, 0, 54)
+            + struct.pack("<IiiHH", 40, width, height, 1, 24)
+        )
+    raise AssertionError(f"no specimen builder for {kind}")
+
+
+@pytest.mark.parametrize(
+    "kind,width,height",
+    [("png", 50_000, 50_000), ("gif", 65_535, 65_535), ("bmp", 50_000, 50_000)],
+)
+def test_a_declared_pixel_count_over_the_cap_is_refused_without_decoding(kind, width, height):
+    """The cap must bind *before* the pixels are decoded, not after.
+
+    `MAX_BYTES` caps an upload at 25 MB, which does not bound the decoded size at all:
+    deflate reduces a uniform field to almost nothing, so 25 MB of PNG is billions of
+    pixels and gigabytes of pixmap. Measuring after `fitz.Pixmap()` has already decoded
+    is measuring the damage, not preventing it — and threat OPS-03 is precisely that an
+    unbounded worker gets the OOM killer to take postgres down with it.
+    """
+    from infra.intake import pdf_from_image
+
+    specimen = _declared_size_image(kind, width, height)
+    assert len(specimen) < 1024, "the specimen must be tiny, or it proves nothing"
+
+    with pytest.raises(UploadRejected) as raised:
+        pdf_from_image(specimen)
+
+    assert raised.value.code is RejectionCode.TOO_MANY_PIXELS, (
+        f"{kind}: refused as {raised.value.code.value}, but the header declares "
+        f"{width}x{height} - so it was decoded before it was measured"
+    )
