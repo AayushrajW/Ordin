@@ -29,3 +29,7 @@ var/
 # is belt and braces, because a CLAUDE.md here would shadow the project's own.
 web/CLAUDE.md
 web/AGENTS.md
+
+# Submission archives built by `python tasks.py package`. Regenerated from git;
+# committing one would commit a copy of the repository into the repository.
+dist/

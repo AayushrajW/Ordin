@@ -6,11 +6,14 @@
  * switcher is a native `<details>` disclosure holding plain form posts — no hydration
  * bundle has to load before someone can change who they are in the middle of a demo.
  *
- * It is labelled, in the frame itself, as a **specimen switcher and not a login**. No
- * credential is checked (accepted risk AR-1). What it does guarantee is that the
- * identity is minted and signed by the server, so the client cannot name itself — which
- * is the difference between the access decisions on these screens meaning something and
- * meaning nothing (threat EXT-02).
+ * **Authentication is real** (ADR 0024): `/login` checks a password, and AR-1 is closed.
+ * The specimen switcher in the footer is a development convenience that survives only
+ * under `ORDIN_ENV=dev` — the API 404s its endpoints outside it, so this frame fetches
+ * them only in dev and renders no switcher at all in a deployment.
+ *
+ * What both routes share, and what the access decisions on these screens rest on, is
+ * that the identity is minted and signed by the *server*: the client cannot name itself
+ * (threat EXT-02).
  */
 import { get, type DemoSubject, type Subject } from "../lib/api";
 import VoiceAssistant, { type VoiceCommand } from "./VoiceAssistant";
@@ -81,7 +84,14 @@ export default async function Shell({
   voice?: { briefing: string; commands?: VoiceCommand[] };
   children: React.ReactNode;
 }) {
-  const directory = await get<{ subjects: DemoSubject[] }>("/demo/subjects");
+  // Only in development. `api/session.py` 404s this endpoint outside `ORDIN_ENV=dev`,
+  // so without the guard every production page render paid a wasted round-trip and
+  // wrote a 404 to the log — a control working correctly, producing noise that looks
+  // like a fault.
+  const showSpecimen = process.env.ORDIN_ENV === "dev";
+  const directory = showSpecimen
+    ? await get<{ subjects: DemoSubject[] }>("/demo/subjects")
+    : null;
   const subjects = directory?.subjects ?? [];
 
   return (

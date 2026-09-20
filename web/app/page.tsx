@@ -1,8 +1,10 @@
 /**
- * Front door and case dashboard.
+ * The case dashboard, and the front door for anyone already signed in.
  *
- * Without a session: the identity chooser, presented as what it is — a specimen
- * switcher, not a login.
+ * Without a session this redirects to `/login`, which is a real login (ADR 0024) — or
+ * to `/awaiting-placement` when the account is authenticated but holds no post, because
+ * bouncing a successful login back to the login form reads as a broken login. The
+ * specimen switcher lives at `/specimen` and exists only under `ORDIN_ENV=dev`.
  *
  * With one: the cases this subject may see. **Nothing on this page filters anything.**
  * The list arrives already filtered, because the policy predicate sits inside the SQL

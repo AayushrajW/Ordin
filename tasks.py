@@ -384,6 +384,76 @@ def cmd_admin() -> int:
     return run([PY, "admin.py", *sys.argv[2:]], check=False).returncode
 
 
+def cmd_counts() -> int:
+    """Every number this project quotes about itself, computed from the source.
+
+    Emitted rather than remembered. `docs/STATUS.md` once carried three different test
+    counts and three different Sentinel counts, and two of the test numbers were both
+    right — test *functions* and test *cases* differ because of parametrisation, and
+    nothing said which was which. Paste this output; do not retype it.
+    """
+    import re
+
+    tests = sorted((ROOT / "tests").glob("test_*.py"))
+    functions = sum(
+        len(re.findall(r"^\s*(?:async\s+)?def test_", f.read_text(encoding="utf-8"), re.M))
+        for f in tests
+    )
+    scenarios = sum(
+        len(re.findall(r"@scenario\(", f.read_text(encoding="utf-8")))
+        for f in (ROOT / "sentinel").glob("scenarios_*.py")
+    )
+    adrs = len(list((ROOT / "docs" / "adr").glob("*.md")))
+    migrations = len(list((ROOT / "alembic" / "versions").glob("[0-9]*.py")))
+    policies = len(list((ROOT / "policies").glob("*.yaml")))
+    modules = len(list((ROOT / "docs" / "modules").glob("*.md")))
+
+    print("")
+    print("  ordin counts        (generated, not remembered)")
+    print(f"  test functions    : {functions}   across {len(tests)} files")
+    # ASCII only: this prints to a Windows console whose code page mangles an em dash.
+    print("  test cases        : run `python tasks.py test` - parametrisation expands")
+    print(f"                      the functions above into more cases")
+    print(f"  sentinel scenarios: {scenarios}")
+    print(f"  ADRs              : {adrs}")
+    print(f"  migrations        : {migrations}")
+    print(f"  policy files      : {policies}")
+    print(f"  module briefs     : {modules}")
+    print("")
+    print("  Quote both test numbers or neither. One without the other invites")
+    print("  somebody to find the second and conclude you were rounding.")
+    return 0
+
+
+def cmd_package() -> int:
+    """Build the submission archive from git, never from the working directory.
+
+    A directory copy ships `.env` — real credentials, correctly gitignored and then
+    included anyway — plus `.venv`, `.git`, `node_modules`, `.next`, `var/` and every
+    `__pycache__`. That is how a 5 MB submission becomes 477 MB with secrets in it.
+
+    `git archive` emits exactly what is committed, which is exactly what a reviewer
+    should receive.
+    """
+    out = ROOT / "dist"
+    out.mkdir(exist_ok=True)
+    name = out / "ordin-submission.zip"
+    result = run(["git", "archive", "--format=zip", "-o", str(name), "HEAD"], check=False)
+    if result.returncode != 0:
+        print("  git archive failed; is this a git checkout with a commit?")
+        return 1
+    size = name.stat().st_size / (1024 * 1024)
+    print("")
+    print(f"  wrote {name}  ({size:.1f} MB)")
+    print("")
+    print("  Contains only committed files. Verify before sending:")
+    print(f"    python -c \"import zipfile;print([n for n in zipfile.ZipFile(r'{name}').namelist() if '.env' in n or 'node_modules' in n] or 'clean')\"")
+    print("")
+    print("  If a previous archive shipped .env, rotate ORDIN_SESSION_SECRET, both")
+    print("  Postgres passwords and the admin password: they have left the machine.")
+    return 0
+
+
 def cmd_worker() -> int:
     """Run the worker alone, natively."""
     run([PY, "-m", "worker.main"], check=False)
@@ -652,6 +722,8 @@ COMMANDS = {
     "worker": cmd_worker,
     "seed": cmd_seed,
     "admin": cmd_admin,
+    "counts": cmd_counts,
+    "package": cmd_package,
     "fixtures": cmd_fixtures,
     "sentinel": cmd_sentinel,
     "evaluate": cmd_evaluate,

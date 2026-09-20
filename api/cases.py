@@ -18,21 +18,26 @@ Two response choices that look like ordinary REST and are actually invariants:
   never surface a name from an unauthorised case, and post-filtering leaks through the
   suggestion list and its length.
 """
+import logging
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.deps import policy as get_policy
 from api.deps import require_subject
+from domain.case import InvalidTransition, transition
+from domain.enums import AuditAction, CaseState
 from domain.policy import Policy
 from domain.subject import Subject
+from infra.audit_log import append_audit
 from infra.authz import authorized_case_ids, authorized_cases, decide
 from infra.decisions import record_decision
 from infra.logging_context import current_correlation_id
 from infra.tables import case_record, party
 
+log = logging.getLogger("ordin.api.cases")
 router = APIRouter(tags=["cases"])
 
 MAX_PAGE = 50
@@ -278,3 +283,161 @@ async def case_summary(
         "policy": f"{decision.policy_id} v{decision.policy_version}",
         "rule": decision.rule_id,
     }
+
+
+# --- creating a case, and moving it -------------------------------------------
+#
+# Until this existed, `domain/case.py`'s state machine was tested and unreachable: ten
+# tests over ALLOWED_TRANSITIONS, and no caller anywhere. The only INSERT INTO
+# case_record in the repository was in seed.py, which meant an investigator could not
+# register a case and a case could not move from registered to filed. A vault somebody
+# else has to stock.
+
+
+class CreateCaseRequest(BaseModel):
+    reference: str = Field(min_length=3, max_length=64)
+    sealed: bool = False
+
+
+class TransitionRequest(BaseModel):
+    state: CaseState
+
+
+@router.post("/cases", status_code=201)
+async def create_case(
+    body: CreateCaseRequest,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+):
+    """Register a case, in the organization and jurisdiction of the post you hold.
+
+    **Neither is a parameter**, deliberately. Both come from the subject the server
+    resolved, so a caller cannot file a case into somebody else's station: accepting
+    them from the body would let anybody who may create a case create one anywhere,
+    which is the organization dimension defeated at the point of creation.
+
+    The creator is designated on it in the same transaction. A case nobody can open is
+    not a safer case, it is a lost one - and the alternative, making creation grant
+    access implicitly, would be a second route to a case that the policy never sees.
+    An assignment row is the *existing* route, so `ordin.case_read` decides this access
+    exactly as it decides every other.
+    """
+    engine = request.app.state.engine
+    reference = body.reference.strip()
+
+    async with engine.begin() as conn:
+        clash = (
+            await conn.execute(
+                sa.text("SELECT 1 FROM case_record WHERE reference = :r"), {"r": reference}
+            )
+        ).scalar_one_or_none()
+        if clash:
+            # Not an existence oracle: the caller is authenticated, and a duplicate
+            # reference within a station is something they must be told about.
+            raise HTTPException(status_code=409, detail="reference_already_used")
+
+        case_id = str(
+            (
+                await conn.execute(
+                    sa.text(
+                        "INSERT INTO case_record "
+                        "  (id, reference, organization_id, jurisdiction_id, state, access_class) "
+                        "VALUES (gen_random_uuid(), :r, :o, :j, :s, :a) RETURNING id"
+                    ),
+                    {
+                        "r": reference,
+                        "o": subject.organization_id,
+                        "j": subject.jurisdiction_id,
+                        "s": CaseState.REGISTERED.value,
+                        "a": "sealed" if body.sealed else "normal",
+                    },
+                )
+            ).scalar_one()
+        )
+
+        await conn.execute(
+            sa.text(
+                "INSERT INTO case_assignment (id, case_id, user_id, valid_from, assigned_by) "
+                "VALUES (gen_random_uuid(), :c, :u, now(), :u)"
+            ),
+            {"c": case_id, "u": subject.user_id},
+        )
+
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.CASE_CREATED,
+            object_type="case_record",
+            object_id=case_id,
+        )
+
+    # Reference only in the log - it is a case number, not a party (invariant 12).
+    log.info(
+        "case created",
+        extra={"case_id": case_id, "actor": subject.user_id, "sealed": body.sealed},
+    )
+    return {
+        "case_id": case_id,
+        "reference": reference,
+        "state": CaseState.REGISTERED.value,
+        "designated": True,
+    }
+
+
+@router.post("/cases/{case_id}/state")
+async def change_case_state(
+    case_id: str,
+    body: TransitionRequest,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Move a case along its lifecycle, or refuse.
+
+    The move is decided by `domain.case.transition`, which is pure and already tested;
+    this route supplies the rows and the audit. Two separate refusals, and they are not
+    the same refusal:
+
+      404 - you cannot reach this case. Indistinguishable from it not existing, because
+            the read filter is what answers first and a 403 would confirm the case is
+            real (threat INS-04).
+      409 - you can reach it, and the move is not permitted from where it stands.
+    """
+    engine = request.app.state.engine
+    at = datetime.now(timezone.utc)
+
+    async with engine.begin() as conn:
+        allowed = authorized_cases(policy, subject, at).subquery()
+        current = (
+            await conn.execute(
+                sa.select(allowed.c.state).where(allowed.c.id == case_id)
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            raise HTTPException(status_code=404, detail="not_found")
+
+        try:
+            target = transition(CaseState(current), body.state)
+        except (InvalidTransition, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+        await conn.execute(
+            sa.text("UPDATE case_record SET state = :s WHERE id = :c"),
+            {"s": target.value, "c": case_id},
+        )
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.CASE_STATE_CHANGED,
+            object_type="case_record",
+            object_id=case_id,
+        )
+
+    log.info(
+        "case state changed",
+        extra={"case_id": case_id, "actor": subject.user_id,
+               "from": current, "to": target.value},
+    )
+    return {"case_id": case_id, "from": current, "to": target.value}

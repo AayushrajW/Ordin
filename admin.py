@@ -41,7 +41,12 @@ ADMIN_POST_TITLE = "System Administrator"
 
 
 async def ensure_admin(
-    *, email: str, password: str, display_name: str, settings: Settings | None = None
+    *,
+    email: str,
+    password: str,
+    display_name: str,
+    settings: Settings | None = None,
+    allow_weak: bool = False,
 ) -> str:
     """Create or update the administrator. Returns the account id."""
     config = settings or Settings()
@@ -49,8 +54,26 @@ async def ensure_admin(
     if "@" not in address:
         raise SystemExit("  an email address is required")
 
-    weak = len(password) < MIN_LENGTH
-    hashed = hash_password(password, enforce_quality=not weak)
+    # The highest-value account in the system must not be the one account exempt from
+    # the policy every other account meets. In a build whose thesis is "seniority grants
+    # nothing", an unconditional bypass here is the single backdoor, and it sits in a
+    # file a reviewer will open.
+    #
+    # A short password is therefore refused outright unless BOTH: the environment is
+    # development, and the operator asked for it explicitly. Two conditions, because
+    # either one alone is something somebody sets once and forgets.
+    too_short = len(password) < MIN_LENGTH
+    if too_short and not (config.ordin_env.lower() in ("dev", "development", "test") and allow_weak):
+        raise SystemExit(
+            "\n"
+            f"  refusing: the password is {len(password)} characters and the minimum "
+            f"is {MIN_LENGTH}.\n"
+            "  This account can place every other account.\n\n"
+            "  In development only, and deliberately:\n"
+            "    python tasks.py admin --email <address> --password <pw> --allow-weak\n"
+            "  or set ORDIN_ADMIN_ALLOW_WEAK=1 in .env.\n"
+        )
+    hashed = hash_password(password, enforce_quality=not too_short)
 
     engine = create_async_engine(config.app_dsn)
     try:
@@ -121,12 +144,13 @@ async def ensure_admin(
     print(f"  post          : {ADMIN_POST_TITLE} (is_administrative)")
     print("  sees          : no case content. An administrator places people;")
     print("                  it is not a designation, so there is nothing to read.")
-    if weak:
+    if too_short:
         print("")
-        print(f"  WARNING  that password is {len(password)} characters. The signup form")
-        print(f"           refuses anything under {MIN_LENGTH}, and this is the account that")
-        print("           can place every other account. Fine on a specimen laptop;")
-        print("           change it before anything is deployed:")
+        print(f"  WARNING  that password is {len(password)} characters, accepted only")
+        print("           because this is a development environment and --allow-weak was")
+        print(f"           given. The signup form refuses anything under {MIN_LENGTH}, and")
+        print("           this account can place every other account. Change it before")
+        print("           anything is deployed:")
         print("             python tasks.py admin --email <same> --password <longer>")
     return user_id
 
@@ -156,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--password", default=configured("ORDIN_ADMIN_PASSWORD"))
     parser.add_argument("--name", default=configured("ORDIN_ADMIN_NAME", "Administrator"))
     parser.add_argument(
+        "--allow-weak",
+        action="store_true",
+        default=configured("ORDIN_ADMIN_ALLOW_WEAK") in ("1", "true", "yes"),
+        help="Development only: accept a password shorter than the minimum.",
+    )
+    parser.add_argument(
         "--if-configured",
         action="store_true",
         help="Exit quietly when no administrator is configured. Used by `tasks.py demo`.",
@@ -171,7 +201,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     asyncio.run(
-        ensure_admin(email=args.email, password=args.password, display_name=args.name)
+        ensure_admin(
+            email=args.email,
+            password=args.password,
+            display_name=args.name,
+            allow_weak=args.allow_weak,
+        )
     )
     return 0
 
