@@ -42,6 +42,17 @@ dependencies = [
     #   alternative : bcrypt, which is fine and older; passlib, which is unmaintained
     #   production  : unchanged - Argon2id is the current recommendation
     "argon2-cffi>=23.1,<24",
+    # cryptography. AES-256-GCM for encryption at rest (docs/adr/0028). CLAUDE.md:
+    # "never implements custom cryptography - use established libraries only", and
+    # infra/crypto.py composes this library's AEAD and nothing else.
+    #   purpose     : envelope-encrypt document bytes before they touch the disk
+    #   licence     : Apache-2.0 OR BSD-3-Clause
+    #   RAM         : ~5 MB resident; encryption is streaming and negligible per blob
+    #   alternative : PyNaCl, which is fine; pycryptodome, which is not maintained to
+    #                 the same standard. Hand-rolling anything here is forbidden.
+    #   production  : unchanged. The part that changes is where the MASTER key lives -
+    #                 `EnvironmentMasterKey` declares maturity mvp and names a KMS.
+    "cryptography>=43,<47",
 ]
 
 [project.optional-dependencies]

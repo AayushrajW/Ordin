@@ -21,6 +21,9 @@ def _settings(**overrides) -> Settings:
         "ordin_session_secret": "l" * 48,
         "ordin_app_password": "a real password",
         "postgres_owner_password": "another real password",
+        # Encryption at rest is part of a sound production configuration now: without
+        # it, document bytes reach the disk in plaintext (ADR 0028).
+        "ordin_master_key": "b3JkaW4tdGVzdC1tYXN0ZXIta2V5LTMyLWJ5dGVzISE",
     }
     base.update(overrides)
     return Settings(**base)
@@ -64,6 +67,12 @@ def test_a_template_database_password_refuses_to_start(field, name, value):
         _settings(**{field: value}).refuse_unsafe_production()
 
 
+def test_an_unset_master_key_refuses_to_start():
+    """Without it, every document reaches the disk readable to anyone with a shell."""
+    with pytest.raises(RuntimeError, match="ORDIN_MASTER_KEY"):
+        _settings(ordin_master_key="").refuse_unsafe_production()
+
+
 def test_the_refusal_names_every_problem_at_once():
     """One restart per mistake is how a deployment takes an afternoon."""
     with pytest.raises(RuntimeError) as raised:
@@ -71,9 +80,13 @@ def test_the_refusal_names_every_problem_at_once():
             ordin_session_secret="",
             ordin_app_password="",
             postgres_owner_password="change_me_owner",
+            ordin_master_key="",
         ).refuse_unsafe_production()
     message = str(raised.value)
-    for name in ("ORDIN_SESSION_SECRET", "ORDIN_APP_PASSWORD", "POSTGRES_OWNER_PASSWORD"):
+    for name in (
+        "ORDIN_SESSION_SECRET", "ORDIN_APP_PASSWORD",
+        "POSTGRES_OWNER_PASSWORD", "ORDIN_MASTER_KEY",
+    ):
         assert name in message, f"{name} was not reported: {message}"
 
 

@@ -32,6 +32,7 @@ from domain.subject import Subject
 from infra.audit_log import append_audit
 from infra.authz import decide, load_case_facts
 from infra.decisions import record_decision
+from infra.crypto import DecryptionFailed
 from infra.disclosure import (
     Disclosure,
     disclosure_for,
@@ -126,6 +127,26 @@ FieldOut.model_rebuild()
 
 
 # --- resolution ---------------------------------------------------------------
+
+
+class IntegrityMismatch(Exception):
+    """The stored bytes are not the bytes that were stored."""
+
+
+def _read_blob(blobs, sha256: str) -> bytes | None:
+    """Stored bytes, or None when they are absent.
+
+    Raises `IntegrityMismatch` when the blob is present and will not open. With
+    encryption (ADR 0028) that is what tampering looks like: AES-GCM authenticates, so
+    a flipped bit fails the tag rather than returning altered bytes for a digest
+    comparison to catch. Same meaning, earlier signal — and the caller must not
+    confuse it with "missing", because a document that is present and altered is the
+    one thing this system exists to notice.
+    """
+    try:
+        return blobs.get(sha256)
+    except DecryptionFailed as exc:
+        raise IntegrityMismatch from exc
 
 
 async def _case_disclosure(conn, policy: Policy, subject: Subject, case_id, at: datetime):
@@ -537,7 +558,11 @@ async def version_page(
             )
         ).scalar_one()
 
-        data = request.app.state.blobs.get(sha256)
+        try:
+            data = _read_blob(request.app.state.blobs, sha256)
+        except IntegrityMismatch:
+            await conn.commit()
+            raise HTTPException(status_code=409, detail="integrity_mismatch") from None
         if data is None:
             await conn.commit()
             raise HTTPException(status_code=409, detail="bytes_unavailable")
@@ -722,7 +747,12 @@ async def redaction_plan(
                 sa.text("SELECT sha256 FROM document_version WHERE id = :v"), {"v": version_id}
             )
         ).scalar_one()
-    data = request.app.state.blobs.get(sha256)
+    try:
+        data = _read_blob(request.app.state.blobs, sha256)
+    except IntegrityMismatch:
+        # Geometry for a tampered document is not a smaller answer, it is the wrong
+        # question. Refuse it the same way the render does.
+        raise HTTPException(status_code=409, detail="integrity_mismatch") from None
     width = height = 0.0
     if data is not None:
         with fitz.open(stream=data, filetype="pdf") as doc:
@@ -789,7 +819,10 @@ async def field_spans(
             )
         ).scalar_one()
 
-    data = request.app.state.blobs.get(sha256)
+    try:
+        data = _read_blob(request.app.state.blobs, sha256)
+    except IntegrityMismatch:
+        raise HTTPException(status_code=409, detail="integrity_mismatch") from None
     if data is None:
         raise HTTPException(status_code=409, detail="bytes_unavailable")
     page_no = words[0]["page_no"] if words else 0

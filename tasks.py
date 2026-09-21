@@ -384,6 +384,28 @@ def cmd_admin() -> int:
     return run([PY, "admin.py", *sys.argv[2:]], check=False).returncode
 
 
+def cmd_newkey() -> int:
+    """Generate a master key for encryption at rest.
+
+    Printed, never written to a file for you. A command that edited `.env` would put
+    the key into shell history, terminal scrollback and any screen share running at the
+    time, and the one thing this key must not do is travel.
+    """
+    sys.path.insert(0, str(ROOT))
+    from infra.crypto import generate_master_key
+
+    print("")
+    print("  ORDIN_MASTER_KEY=" + generate_master_key())
+    print("")
+    print("  Put that in .env, or in the deployment environment.")
+    print("")
+    print("  It wraps the data key of every stored document. Lose it and every blob")
+    print("  is unreadable, with no recovery path - so back it up somewhere that is")
+    print("  not the machine holding the blobs. Changing it does NOT re-encrypt what")
+    print("  is already stored: blobs written under the old key stop opening.")
+    return 0
+
+
 def cmd_counts() -> int:
     """Every number this project quotes about itself, computed from the source.
 
@@ -723,6 +745,7 @@ COMMANDS = {
     "seed": cmd_seed,
     "admin": cmd_admin,
     "counts": cmd_counts,
+    "newkey": cmd_newkey,
     "package": cmd_package,
     "fixtures": cmd_fixtures,
     "sentinel": cmd_sentinel,

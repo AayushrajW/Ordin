@@ -196,7 +196,27 @@ async def test_the_same_bytes_in_two_cases_produce_two_versions(ctx):
     await conn.commit()
 
     assert first.version_id != second.version_id
-    assert first.content_sha256 == second.content_sha256, "same bytes, as intended"
+
+    # **The stored digests are NOT asserted equal**, and that is not a weaker test —
+    # it is the only honest one. ADR 0017: `sanitise` is deterministic within a clean
+    # process, and across a long-lived one its output occasionally differs by a few
+    # bytes as mupdf compacts object numbering differently. Asserting equality here
+    # made this file fail intermittently, in a different test each time, for a property
+    # the project has documented as not guaranteed.
+    #
+    # What IS guaranteed, and what identity actually keys on since migration 0008, is
+    # the digest of what ARRIVED. That is asserted instead.
+    sources = (
+        await conn.execute(
+            sa.text(
+                "SELECT source_sha256 FROM document_version WHERE id IN (:a, :b)"
+            ),
+            {"a": first.version_id, "b": second.version_id},
+        )
+    ).scalars().all()
+    assert len(set(sources)) == 1, (
+        f"the same uploaded bytes recorded different source digests: {sources}"
+    )
 
 
 # --- failure and retry -----------------------------------------------------------

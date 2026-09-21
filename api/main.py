@@ -29,6 +29,7 @@ from api.session import router as session_router
 from domain.completeness import load_completeness_policy
 from domain.policy import load_policy
 from infra.blobstore import LocalBlobStore
+from infra.crypto import EnvironmentMasterKey
 
 log = logging.getLogger("ordin.api")
 
@@ -92,7 +93,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     blob_root = Path(settings.ordin_blob_root)
     if not blob_root.is_absolute():
         blob_root = Path(__file__).resolve().parents[1] / blob_root
-    app.state.blobs = LocalBlobStore(blob_root)
+    app.state.blobs = LocalBlobStore(
+        blob_root,
+        master=EnvironmentMasterKey.from_setting(
+            settings.ordin_master_key.get_secret_value()
+        ),
+    )
 
     # **No OCR engine here, on purpose.** docker/python.Dockerfile gives the api image
     # no Tesseract, because an api that could run OCR invites somebody to call it

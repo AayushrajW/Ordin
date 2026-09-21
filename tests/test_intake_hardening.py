@@ -152,6 +152,12 @@ def test_sanitisation_is_deterministic():
     first, second = sanitise(hostile), sanitise(hostile)
     assert first.data == second.data
     assert first.sha256 == second.sha256
+    # If this ever fails *intermittently*, it is the limit of the guarantee rather than
+    # a regression: ADR 0017 records that mupdf occasionally compacts object numbering
+    # differently in a long-lived process. Back-to-back calls are the tightest case and
+    # have been stable. `test_pipeline_idempotency` once asserted the same property far
+    # apart in a long process and failed roughly one run in three, in a different test
+    # each time — which is how an afternoon disappears if nobody has written this down.
 
 
 def test_sanitising_an_already_sanitised_file_is_clean_but_not_byte_identical():

@@ -20,6 +20,8 @@ import hashlib
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from infra.crypto import DecryptionFailed, MasterKey, is_sealed, seal, unseal
+
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -56,9 +58,17 @@ class BlobStore(ABC):
 class LocalBlobStore(BlobStore):
     """Filesystem implementation. Fan-out by digest prefix to keep directories small."""
 
-    def __init__(self, root: Path | str) -> None:
+    def __init__(self, root: Path | str, master: MasterKey | None = None) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # None means "write plaintext", which is what a development checkout with no
+        # key configured does. `Settings.refuse_unsafe_production` is where a
+        # deployment is made to configure one — the decision belongs there, not here.
+        self.master = master
+
+    @property
+    def encrypted(self) -> bool:
+        return self.master is not None
 
     def _path(self, address: str) -> Path:
         if len(address) != 64 or not all(c in "0123456789abcdef" for c in address):
@@ -66,6 +76,11 @@ class LocalBlobStore(BlobStore):
         return self.root / address[:2] / address[2:4] / address
 
     def put(self, data: bytes) -> str:
+        # **The address is the digest of the PLAINTEXT**, not of the envelope. Two
+        # things depend on that and would both break silently otherwise: content
+        # addressing stays idempotent (the same document encrypts to different bytes
+        # every time, because the data key and nonces are fresh), and `verify()` keeps
+        # comparing what was anchored with what is held.
         address = sha256_bytes(data)
         path = self._path(address)
         if path.exists():
@@ -73,21 +88,52 @@ class LocalBlobStore(BlobStore):
             # a mutation at worst, and originals are never mutated.
             return address
         path.parent.mkdir(parents=True, exist_ok=True)
+        stored = seal(data, self.master) if self.master else data
         # Write to a temporary name and move, so a crash mid-write cannot leave a
         # truncated file at a valid content address - which would verify as MISMATCH
         # forever and look like tampering.
         temporary = path.with_suffix(".partial")
-        temporary.write_bytes(data)
+        temporary.write_bytes(stored)
         temporary.replace(path)
         return address
 
     def get(self, address: str) -> bytes | None:
+        """The plaintext, or None if it is not there.
+
+        Raises `DecryptionFailed` when a blob is an envelope that will not open —
+        which means the bytes changed or the key is wrong. Deliberately **not** None:
+        None means "not present", which `verify()` maps to UNAVAILABLE, and a tampered
+        document reported as missing would be the wrong answer to the one question this
+        system exists to answer.
+        """
         path = self._path(address)
-        return path.read_bytes() if path.exists() else None
+        if not path.exists():
+            return None
+        raw = path.read_bytes()
+        if not is_sealed(raw):
+            # Written before encryption was configured. Readable on purpose: a store
+            # that could not read what it wrote yesterday would make turning encryption
+            # on a data-loss event.
+            return raw
+        if self.master is None:
+            raise DecryptionFailed("blob is encrypted and no master key is configured")
+        return unseal(raw, self.master)
 
     def exists(self, address: str) -> bool:
         return self._path(address).exists()
 
     def digest_of_stored(self, address: str) -> str | None:
-        data = self.get(address)
+        """Hash what is actually held, re-reading rather than trusting the address.
+
+        When an envelope fails to open, the digest of the raw file is returned. It
+        cannot equal the address — the address is a digest of plaintext — so `verify()`
+        reports **MISMATCH**, which is the truthful answer: the bytes are not the bytes
+        that were stored. Returning None here would say UNAVAILABLE and turn a detected
+        tamper into a missing file.
+        """
+        try:
+            data = self.get(address)
+        except DecryptionFailed:
+            path = self._path(address)
+            return sha256_bytes(path.read_bytes()) if path.exists() else None
         return None if data is None else sha256_bytes(data)

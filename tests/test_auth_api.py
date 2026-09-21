@@ -194,6 +194,8 @@ async def test_the_specimen_switcher_is_refused_outside_dev(live_settings):
             "ordin_session_secret": SecretStr(
                 "a-real-session-secret-of-sufficient-length-for-production"
             ),
+            # Production also refuses to start without encryption at rest (ADR 0028).
+            "ordin_master_key": SecretStr("b3JkaW4tdGVzdC1tYXN0ZXIta2V5LTMyLWJ5dGVzISE"),
         }
     )
     app = create_app(production)

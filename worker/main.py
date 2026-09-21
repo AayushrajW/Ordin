@@ -121,6 +121,7 @@ def _build_pipeline(settings):
     """
     from infra.anchor import LocalAnchorStore
     from infra.blobstore import LocalBlobStore
+    from infra.crypto import EnvironmentMasterKey
     from infra.esign import SimulatedESignProvider
     from infra.pipeline import Pipeline
     from infra.textsource import TesseractOcr
@@ -137,7 +138,15 @@ def _build_pipeline(settings):
         )
         return None
     return Pipeline(
-        blobs=LocalBlobStore(blob_root),
+        # Same key as the api, from the same setting. A worker writing plaintext
+        # while the api writes envelopes would leave half the store readable and
+        # nothing would look wrong until somebody copied the disk.
+        blobs=LocalBlobStore(
+            blob_root,
+            master=EnvironmentMasterKey.from_setting(
+                settings.ordin_master_key.get_secret_value()
+            ),
+        ),
         text_source=source,
         signer=SimulatedESignProvider(settings.ordin_session_secret.get_secret_value()),
         anchors=LocalAnchorStore(),

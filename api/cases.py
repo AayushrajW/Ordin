@@ -35,6 +35,7 @@ from domain.subject import Subject
 from infra.audit_log import append_audit
 from infra.authz import authorized_case_ids, authorized_cases, decide
 from infra.decisions import record_decision
+from infra.disclosure import Disclosure
 from infra.logging_context import current_correlation_id
 from infra.tables import case_record, party
 
@@ -405,14 +406,25 @@ async def change_case_state(
             real (threat INS-04).
       409 - you can reach it, and the move is not permitted from where it stands.
     """
+    from api.documents import _case_disclosure
+
     engine = request.app.state.engine
     at = datetime.now(timezone.utc)
 
     async with engine.begin() as conn:
-        allowed = authorized_cases(policy, subject, at).subquery()
+        # **Designation, not merely reach.** A grant is purpose-limited *read* access;
+        # it is not custody of the case. Gating on `authorized_cases` alone let a
+        # prosecutor holding a charge-sheet-preparation grant close the investigating
+        # officer's case — reaching a case and directing it are different powers, and
+        # only designation carries the second. Disclosure class is where that
+        # distinction already lives (ADR 0013), so it is reused rather than reinvented.
+        disclosure = await _case_disclosure(conn, policy, subject, case_id, at)
+        if disclosure is not Disclosure.ORIGINAL:
+            raise HTTPException(status_code=404, detail="not_found")
+
         current = (
             await conn.execute(
-                sa.select(allowed.c.state).where(allowed.c.id == case_id)
+                sa.text("SELECT state FROM case_record WHERE id = :c"), {"c": case_id}
             )
         ).scalar_one_or_none()
         if current is None:
@@ -520,13 +532,26 @@ async def case_completeness(
     anybody can check; "this case is ready to file" is a judgement with consequences,
     and CLAUDE.md is explicit that the system does not make it.
     """
+    from api.documents import _case_disclosure
+
     engine = request.app.state.engine
     at = datetime.now(timezone.utc)
 
     async with engine.connect() as conn:
-        allowed = authorized_cases(policy, subject, at).subquery()
+        # **Disclosure class, not just case access.** Passing the case filter is what a
+        # grant is for, and it is not enough here: these counts describe originals. A
+        # case holding three FIRs and one redacted derivative would otherwise tell a
+        # grantee "fir: 3" while showing them one document, confirming two originals
+        # whose existence the document routes deliberately refuse to confirm
+        # (threats VIC-01, INS-08). Raises the shared 404.
+        disclosure = await _case_disclosure(conn, policy, subject, case_id, at)
+        if disclosure is not Disclosure.ORIGINAL:
+            raise HTTPException(status_code=404, detail="not_found")
+
         state = (
-            await conn.execute(sa.select(allowed.c.state).where(allowed.c.id == case_id))
+            await conn.execute(
+                sa.text("SELECT state FROM case_record WHERE id = :c"), {"c": case_id}
+            )
         ).scalar_one_or_none()
         if state is None:
             raise HTTPException(status_code=404, detail="not_found")

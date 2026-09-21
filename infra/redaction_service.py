@@ -30,6 +30,7 @@ import sqlalchemy as sa
 
 from domain.enums import AuditAction
 from infra.audit_log import append_audit
+from infra.crypto import DecryptionFailed
 from infra.blobstore import BlobStore
 from domain.pii import FindingKind, KnownValue, detect, kind_for_field
 from infra.redact import Region, redact
@@ -187,7 +188,12 @@ async def create_redacted_version(
     if parent is None:
         raise RedactionUnavailable("no such version")
 
-    source = blobs.get(parent["sha256"])
+    try:
+        source = blobs.get(parent["sha256"])
+    except DecryptionFailed as exc:
+        # Redacting a document whose bytes will not open would burn regions into
+        # something that is not the evidence. Refuse instead (ADR 0028).
+        raise ValueError("source bytes failed integrity check") from exc
     if source is None:
         raise RedactionUnavailable("the original bytes are not in the store")
 

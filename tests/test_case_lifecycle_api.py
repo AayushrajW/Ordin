@@ -267,3 +267,49 @@ async def test_a_transition_writes_an_audit_row(api):
             )
         ).scalars().all()
     assert "case_state_changed" in actions, actions
+
+
+async def test_a_grantee_cannot_move_a_case_through_its_lifecycle(api):
+    """A grant is purpose-limited *read* access. It is not custody of the case.
+
+    The bug this was written against: the transition route gated on `authorized_cases`
+    alone, which a grant satisfies — so a prosecutor holding a charge-sheet-preparation
+    grant could close the investigating officer's case. Reaching a case and directing
+    it are different powers, and only designation carries the second.
+    """
+    client, engine, ids = api
+    await sign_in(client, ids["officer"])
+    case_id = (await client.post("/cases", json={"reference": _reference()})).json()["case_id"]
+
+    # Give the grantee a real, live, purpose-limited grant on that case.
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "INSERT INTO access_grant "
+                "(id, grantee_id, case_id, purpose, expires_at, granted_by) "
+                "VALUES (gen_random_uuid(), :g, :c, 'charge-sheet preparation', "
+                "        now() + interval '30 days', :by)"
+            ),
+            {"g": ids["grantee"], "c": case_id, "by": ids["officer"]},
+        )
+
+    await client.delete("/session")
+    await sign_in(client, ids["grantee"])
+    assert any(c["id"] == case_id for c in (await client.get("/cases")).json()), (
+        "precondition failed: the grant does not reach the case"
+    )
+
+    refused = await client.post(
+        f"/cases/{case_id}/state", json={"state": CaseState.CLOSED.value}
+    )
+    assert refused.status_code == 404, (
+        f"a grantee moved a case they hold only a read grant on ({refused.status_code})"
+    )
+
+    async with engine.connect() as conn:
+        still = (
+            await conn.execute(
+                sa.select(case_record.c.state).where(case_record.c.id == case_id)
+            )
+        ).scalar_one()
+    assert still == CaseState.REGISTERED.value, f"the case moved anyway: {still}"

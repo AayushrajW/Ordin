@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # and the worker agree on one location without either of them owning it.
     ordin_blob_root: str = "var/blobs"
 
+    # Wraps the per-blob data keys (infra/crypto.py). Base64, 32 bytes decoded.
+    # Empty means blobs are written in plaintext, which is what a development
+    # checkout does; `refuse_unsafe_production` makes a deployment configure one.
+    #
+    # SecretStr for the same reason as the session secret: a plain string reaches a
+    # log, a traceback or a repr eventually, and this one decrypts every document.
+    ordin_master_key: SecretStr = SecretStr("")
+
     # --- derived ---
     def _dsn(self, user: str, password: SecretStr) -> str:
         return (
@@ -125,6 +133,12 @@ class Settings(BaseSettings):
             problems.append(
                 "ORDIN_SESSION_SECRET is shorter than 32 characters. Generate one with "
                 "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+
+        if not reveal(self.ordin_master_key).strip():
+            problems.append(
+                "ORDIN_MASTER_KEY is unset, so document bytes are written to disk in "
+                "plaintext. Generate one with `python tasks.py newkey`."
             )
 
         for name, value in (

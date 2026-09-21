@@ -35,7 +35,8 @@ if str(ROOT) not in sys.path:
 
 from api.config import Settings  # noqa: E402
 from infra.anchor import LocalAnchorStore  # noqa: E402
-from infra.blobstore import LocalBlobStore  # noqa: E402
+from infra.blobstore import LocalBlobStore
+from infra.crypto import EnvironmentMasterKey  # noqa: E402
 from infra.esign import SimulatedESignProvider  # noqa: E402
 from infra.pipeline import Pipeline  # noqa: E402
 from infra.redaction_service import RedactionUnavailable, create_redacted_version  # noqa: E402
@@ -57,7 +58,12 @@ async def load_demo() -> int:
     blob_root = Path(settings.ordin_blob_root)
     if not blob_root.is_absolute():
         blob_root = ROOT / blob_root
-    blobs = LocalBlobStore(blob_root)
+    blobs = LocalBlobStore(
+        blob_root,
+        master=EnvironmentMasterKey.from_setting(
+            settings.ordin_master_key.get_secret_value()
+        ),
+    )
 
     try:
         ocr = TesseractOcr()
