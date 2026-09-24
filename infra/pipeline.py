@@ -283,15 +283,31 @@ class Pipeline:
         digest for rows written before migration 0008. Originals are never overwritten
         (reliability invariant); this either matches what is there or adds a new
         version number.
-        """
-        self.blobs.put(data)
 
+        **The lookup happens before the bytes are stored, and a disposed version is
+        invisible to it.** Both halves of that sentence are load-bearing:
+
+        `put` used to run first, unconditionally. Re-uploading a lawfully disposed
+        document therefore wrote its bytes back to the same content address — the
+        address is a digest of the plaintext, so it is the same file — and then matched
+        the disposed row and returned it. The result was a document whose disposition
+        record, `lifecycle_state` and `verify()` all said "lawfully disposed; bytes not
+        retained" while the bytes sat in the store. `verify()` checks disposal *before*
+        the bytes, correctly and by design (invariant 5), so nothing could ever notice.
+        A system that exists to say truthfully what it holds was saying the opposite.
+
+        Excluding disposed rows is the other half. Re-filing a document that was
+        disposed in error is legitimate, and versions are append-only, so it becomes a
+        **new** version rather than resurrecting the old record. A second re-upload then
+        matches that new active version, so idempotency survives.
+        """
         existing = (
             await conn.execute(
                 sa.text(
                     "SELECT dv.id, dv.document_id FROM document_version dv "
                     "JOIN document d ON d.id = dv.document_id "
                     "WHERE d.case_id = :c "
+                    "  AND dv.lifecycle_state <> 'disposed' "
                     "  AND (dv.source_sha256 = :src "
                     "       OR (dv.source_sha256 IS NULL AND dv.sha256 = :h)) "
                     "LIMIT 1"
@@ -300,7 +316,13 @@ class Pipeline:
             )
         ).mappings().one_or_none()
         if existing:
+            # Deliberately no `put` here. The bytes for a version that already exists
+            # are already stored, or they are gone and `verify()` must say so - and
+            # silently restoring them on re-upload would erase the one signal that says
+            # a document went missing.
             return existing["document_id"], existing["id"]
+
+        self.blobs.put(data)
 
         document_id = (
             await conn.execute(

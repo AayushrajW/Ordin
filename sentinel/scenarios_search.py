@@ -66,8 +66,22 @@ async def unreachable_cases_are_not_searchable(ctx) -> str:
     import sqlalchemy as sa
 
     await _sign_in(ctx, "officer")
-    mine = (await ctx.client.get("/search/all?q=VRN")).json()
-    reachable = {c["reference"] for c in mine["cases"]}
+
+    # **The reachable set is what the caller can LIST, paged in full.** This used to be
+    # `/search/all?q=VRN` - a substring search on the demo corpus's own reference prefix
+    # - so any case whose reference did not contain "VRN" was classified as unreachable
+    # no matter who was designated on it. The moment another scenario registered a case
+    # under a different prefix, this asserted that search must not return a case the
+    # officer was legitimately designated on, and failed. A precondition derived from a
+    # fixture's naming convention is not a precondition.
+    reachable: set[str] = set()
+    offset = 0
+    while True:
+        page = (await ctx.client.get(f"/cases?limit=50&offset={offset}")).json()
+        reachable.update(c["reference"] for c in page)
+        if len(page) < 50:
+            break
+        offset += 50
 
     async with ctx.engine.connect() as conn:
         every = (

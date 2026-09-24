@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.deps import policy as get_policy, require_subject
@@ -82,6 +82,8 @@ async def search_everything(
     engine = request.app.state.engine
     at = datetime.now(timezone.utc)
     term = q.strip()
+    if len(term) < 2:
+        raise HTTPException(status_code=400, detail="search_query_too_short")
 
     async with engine.connect() as conn:
         # --- cases -------------------------------------------------------------

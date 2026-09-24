@@ -19,25 +19,31 @@ Two response choices that look like ordinary REST and are actually invariants:
   suggestion list and its length.
 """
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from api.deps import break_glass_policy as get_break_glass_policy
 from api.deps import policy as get_policy
 from api.deps import require_subject
 from domain.case import InvalidTransition, transition
 from domain.completeness import assess
 from domain.enums import AuditAction, CaseState
 from domain.policy import Policy
-from domain.subject import Subject
+from domain.subject import CaseFacts, Subject
 from infra.audit_log import append_audit
-from infra.authz import authorized_case_ids, authorized_cases, decide
+from infra.authz import authorized_case_ids, authorized_cases, decide, load_case_facts
 from infra.decisions import record_decision
 from infra.disclosure import Disclosure
 from infra.logging_context import current_correlation_id
 from infra.tables import case_record, party
+
+# Mirrors migration 0013's CHECK. One number, named once, so the edge and the
+# database cannot drift apart again.
+BREAK_GLASS_MINIMUM_JUSTIFICATION = 40
 
 log = logging.getLogger("ordin.api.cases")
 router = APIRouter(tags=["cases"])
@@ -111,6 +117,11 @@ async def get_case(
     subject: Subject = Depends(require_subject),
     policy: Policy = Depends(get_policy),
 ) -> CaseOut:
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not_found")
+    
     now = datetime.now(timezone.utc)
     engine = request.app.state.engine
 
@@ -230,6 +241,8 @@ async def case_summary(
             raise HTTPException(status_code=404, detail="not_found")
 
         facts = await load_case_facts(conn, subject, case_id, now)
+        if facts is None:
+            raise HTTPException(status_code=404, detail="not_found")
         disclosure = disclosure_for(subject, facts).disclosure
         grant = (
             await conn.execute(
@@ -310,6 +323,7 @@ async def create_case(
     body: CreateCaseRequest,
     request: Request,
     subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
 ):
     """Register a case, in the organization and jurisdiction of the post you hold.
 
@@ -326,6 +340,26 @@ async def create_case(
     """
     engine = request.app.state.engine
     reference = body.reference.strip()
+    now = datetime.now(timezone.utc)
+
+    # **You may not register a case you could not then open.** Sealing is the case
+    # that matters: an officer with ordinary clearance could otherwise create a sealed
+    # case, be designated on it by the same statement, and be refused by the next
+    # request - a resource made unreadable to its own author, with no unseal route.
+    #
+    # Asked of the policy rather than answered with a clearance comparison here. A
+    # hand-rolled authorization condition in a controller is what invariant 3 forbids,
+    # and this way the rule tracks the policy file instead of drifting from it.
+    prospective = CaseFacts(
+        case_id="prospective",
+        organization_id=subject.organization_id,
+        jurisdiction_id=subject.jurisdiction_id,
+        is_sealed=body.sealed,
+        assignment_active=True,
+    )
+    readable = policy.evaluate(subject, prospective, now)
+    if not readable.allowed:
+        raise HTTPException(status_code=409, detail="would_not_be_readable")
 
     async with engine.begin() as conn:
         clash = (
@@ -581,3 +615,227 @@ async def case_completeness(
             "loader refuses a deadline with no source."
         ),
     )
+
+
+@router.get("/cases/{case_id}/activity")
+async def case_activity(
+    case_id: str,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Hash-chained audit rows for this case. Originals only — same gate as completeness.
+
+    A purpose-limited grant learning who verified which original is metadata about a
+    document they may not read. Empty would confirm the trail exists; 404 does not.
+    """
+    from api.documents import _case_disclosure
+
+    now = datetime.now(timezone.utc)
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not_found")
+
+    async with request.app.state.engine.connect() as conn:
+        disclosure = await _case_disclosure(conn, policy, subject, case_id, now)
+        await conn.commit()
+        if disclosure is not Disclosure.ORIGINAL:
+            raise HTTPException(status_code=404, detail="not_found")
+        rows = (
+            await conn.execute(
+                sa.text(
+                    "SELECT a.seq, a.action, a.object_type, a.utc_ts, "
+                    "       u.display_name AS actor, p.title AS post "
+                    "FROM audit_event a "
+                    "LEFT JOIN app_user u ON u.id::text = a.actor_id "
+                    "LEFT JOIN post p ON p.id = u.post_id "
+                    "WHERE a.case_id = :c "
+                    "ORDER BY a.seq DESC LIMIT 40"
+                ),
+                {"c": case_id},
+            )
+        ).mappings().all()
+    return [
+        {
+            "seq": r["seq"],
+            "action": r["action"],
+            "object_type": r["object_type"],
+            "at": r["utc_ts"],
+            "actor": r["actor"],
+            "post": r["post"],
+        }
+        for r in rows
+    ]
+
+
+# --- break-glass ------------------------------------------------------------------
+
+
+class BreakGlassRequest(BaseModel):
+    """A written reason and a window. Both are required; neither has a default that
+    lets somebody click through it.
+
+    40 characters is a low bar that "urgent" and "need access" still fail. The same
+    minimum is a CHECK constraint in migration 0013, because a value the application
+    never writes can still arrive from a fixture loader, and an empty justification
+    makes the record worthless exactly when somebody is reading it to decide whether
+    the access was proper.
+    """
+
+    justification: str = Field(max_length=2000)
+    # Hours, not days. The window is the control - there is no revocation, because
+    # a revoke button on a sixty-minute exception is theatre (ADR 0029).
+    minutes: int = Field(default=60, ge=5, le=480)
+
+    @field_validator("justification")
+    @classmethod
+    def _substantial(cls, value: str) -> str:
+        """Measure the string the DATABASE will measure, and store what was measured.
+
+        `min_length=40` on the field would count the raw value, while migration 0013's
+        CHECK counts `btrim(justification)` - so `"Urgent." + forty spaces` passed the
+        edge and failed the constraint, arriving as an unhandled CheckViolation. A 500
+        where a 422 belongs, and the rollback discarded the request's own
+        policy_decision rows, so a refused break-glass left no trace of being refused.
+
+        Stripping here rather than at the insert means one string is validated, stored
+        and constrained. `DisposeRequest` below repeats migration 0005's enumerated
+        values for the same reason.
+        """
+        trimmed = value.strip()
+        if len(trimmed) < BREAK_GLASS_MINIMUM_JUSTIFICATION:
+            raise ValueError(
+                f"a justification must be at least {BREAK_GLASS_MINIMUM_JUSTIFICATION} "
+                "characters once trimmed"
+            )
+        return trimmed
+
+
+@router.post("/cases/{case_id}/break-glass", status_code=201)
+async def declare_break_glass(
+    case_id: str,
+    body: BreakGlassRequest,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+    glass: Policy = Depends(get_break_glass_policy),
+):
+    """Declare a bounded, justified exception to a case's seal (ADR 0029).
+
+    **Why this exists at all.** "Sealed records require authorization beyond ordinary
+    clearance" is a deny, and a deny with no exception is a design that gets worked
+    around: the officer who needs the file at 2am rings somebody with clearance and
+    uses their session, and the system records the wrong person reading the wrong file
+    for a reason nobody wrote down. The exception is the cheaper trade, because taking
+    it costs a written justification and a row on the audit chain.
+
+    **Two policies decide this, not one.** `ordin.case_read` answers "does an existing
+    exception count", in a deny rule, so break-glass can only subtract an obstacle from
+    a path the subject already had. `ordin.break_glass` answers "may you declare one",
+    and refuses a grantee: an external party must never be able to self-authorize past
+    a seal, because there is nobody upstream of them to answer for it. One merged
+    policy would have let `purpose-limited-grant` do both jobs.
+
+    **The order of the checks is the leak control.** Read access is evaluated first.
+    A subject who can already read the case is told plainly why they do not need this
+    (409), which is safe precisely because they can already see the case. Everybody
+    else gets one answer - 404 - whether the case does not exist, is not theirs, or is
+    not sealed. A 409 "this case is not sealed" for a stranger is an existence oracle
+    (threat INS-04).
+    """
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        # The same guard the sibling routes carry. Without it a non-uuid path segment
+        # reaches `load_case_facts` and fails in the driver as a 500, which is both a
+        # worse answer and a different answer from the 404 everything else gives.
+        raise HTTPException(status_code=404, detail="not_found")
+
+    now = datetime.now(timezone.utc)
+    engine = request.app.state.engine
+
+    # **Decisions are committed before any refusal is raised**, which is why this is
+    # `connect()` with explicit commits rather than one `begin()` block.
+    #
+    # Wrapping the whole handler in a transaction meant every refused attempt rolled
+    # its own `policy_decision` rows back on the way out. A log that keeps only the
+    # successes cannot answer "was this refused, and why" - which is the question a
+    # break-glass audit is *for*, since somebody who tries to break a seal they may not
+    # break is exactly who you want a record of. Invariant 3 says every decision logs
+    # the policy that decided it, and a deny is a decision.
+    async with engine.connect() as conn:
+        facts = await load_case_facts(conn, subject, case_id, now)
+        if facts is None:
+            raise HTTPException(status_code=404, detail="not_found")
+
+        # Can they already read it? If so there is nothing to break, and saying so
+        # reveals nothing they cannot already see.
+        readable = policy.evaluate(subject, facts, now)
+        await record_decision(
+            conn, readable, subject=subject, resource_type="case",
+            resource_id=case_id, correlation_id=current_correlation_id(),
+        )
+        if readable.allowed:
+            await conn.commit()
+            raise HTTPException(
+                status_code=409,
+                detail="case_not_sealed" if not facts.is_sealed else "clearance_sufficient",
+            )
+
+        eligible = glass.evaluate(subject, facts, now)
+        decision_seq = await record_decision(
+            conn, eligible, subject=subject, resource_type="case",
+            resource_id=case_id, action="break_glass",
+            correlation_id=current_correlation_id(),
+        )
+        if not eligible.allowed:
+            await conn.commit()
+            raise HTTPException(status_code=404, detail="not_found")
+
+        expires_at = now + timedelta(minutes=body.minutes)
+        record_id = str(uuid.uuid4())
+        await conn.execute(
+            sa.text(
+                "INSERT INTO break_glass_access "
+                "(id, case_id, actor_id, justification, declared_at, expires_at, "
+                " policy_decision_seq) "
+                "VALUES (:i, :c, :a, :j, :d, :e, :s)"
+            ),
+            {
+                "i": record_id, "c": case_id, "a": subject.user_id,
+                "j": body.justification, "d": now, "e": expires_at,
+                "s": decision_seq,
+            },
+        )
+        # The chain carries the id of the record, never its text (invariant 4).
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.SEAL_BREAK_GLASS,
+            object_type="break_glass",
+            object_id=record_id,
+            at=now,
+        )
+        # The declaration and its chain row commit together. The decision that
+        # permitted it is already durable, which is the correct asymmetry: a decision
+        # without a declaration is a refusal, a declaration without a decision would be
+        # an access nobody authorised.
+        await conn.commit()
+
+    log.info(
+        "break-glass declared",
+        extra={"case_id": case_id, "minutes": body.minutes, "rule_id": eligible.rule_id},
+    )
+    return {
+        "id": record_id,
+        "expires_at": expires_at,
+        "minutes": body.minutes,
+        "policy": f"{eligible.policy_id} v{eligible.policy_version}",
+        "rule_id": eligible.rule_id,
+        "note": (
+            "This access is recorded against your name, with your justification, until "
+            "it expires. It is not revocable and it does not extend."
+        ),
+    }

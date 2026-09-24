@@ -26,8 +26,8 @@ const PROMISES = [
     body: "Every mention of a protected identity is found and burned out of the page — including the ones in the narrative." },
   { icon: <IconChain className="h-4 w-4" />, title: "A hash-chained record of custody",
     body: "Every commit, upload and view is an append-only audit row that commits to the one before it." },
-  { icon: <IconEye className="h-4 w-4" />, title: "Nothing leaves this machine",
-    body: "No cloud, no model, no telemetry. OCR, extraction and verification run offline." },
+  { icon: <IconEye className="h-4 w-4" />, title: "Demonstration runs locally",
+    body: "This demonstration runs entirely on the local machine. No demonstration data leaves this environment. Production deployment is designed for controlled government infrastructure." },
 ];
 
 

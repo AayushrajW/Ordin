@@ -64,8 +64,9 @@ export type AdminCase = {
 }
 
 export type CurrentAccess = {
-  designations: { reference: string; display_name: string; since: string | null }[];
+  designations: { reference: string; user_id: string; display_name: string; since: string | null }[];
   grants: {
+    user_id: string;
     grant_id: string;
     reference: string;
     display_name: string;
@@ -137,6 +138,7 @@ export type Version = {
 export type DocumentRecord = {
   id: string;
   title: string;
+  case_id?: string | null;
   disclosure: "original" | "redacted" | "none";
   versions: Version[];
 };
@@ -274,6 +276,7 @@ export async function post<T>(path: string, body?: unknown): Promise<WriteResult
     if (response.status === 404)
       return { ok: false, reason: "Not available to you." };
     if (!response.ok) return { ok: false, reason: "The request was refused." };
+    if (response.status === 204) return { ok: true, data: undefined as unknown as T };
     return { ok: true, data: (await response.json()) as T };
   } catch {
     return { ok: false, reason: "The API did not respond." };
@@ -298,6 +301,7 @@ export async function del<T>(path: string, body?: unknown): Promise<WriteResult<
     if (response.status === 401) return { ok: false, reason: "Your session has ended." };
     if (response.status === 404) return { ok: false, reason: "Not available to you." };
     if (!response.ok) return { ok: false, reason: "The request was refused." };
+    if (response.status === 204) return { ok: true, data: undefined as unknown as T };
     return { ok: true, data: (await response.json()) as T };
   } catch {
     return { ok: false, reason: "The API did not respond." };

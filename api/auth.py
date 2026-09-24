@@ -35,6 +35,7 @@ from infra.accounts import (
 )
 from infra.authz import load_subject
 from infra.passwords import MAX_LENGTH, MIN_LENGTH, PasswordRejected
+from sqlalchemy.exc import IntegrityError
 from infra.subject_provider import COOKIE_NAME, DEFAULT_LIFETIME
 
 log = logging.getLogger("ordin.api.auth")
@@ -90,7 +91,7 @@ async def signup(body: SignupRequest, request: Request):
             )
     except PasswordRejected as exc:
         raise HTTPException(status_code=400, detail=f"password {exc}") from None
-    except ValueError:
+    except (ValueError, IntegrityError):
         # Deliberately indistinguishable from a rejected address. See the docstring.
         raise HTTPException(
             status_code=400,

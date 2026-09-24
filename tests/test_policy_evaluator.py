@@ -15,11 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from domain.policy import Effect, PolicyError, load_policy
+from domain.policy import Effect, PolicyError, latest_policy_path, load_policy
 from domain.subject import CLEARANCE_ORDINARY, CLEARANCE_SEALED, CaseFacts, Subject
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = ROOT / "policies" / "case_read.v1.yaml"
+# Resolved, never spelled out. Five test files used to hardcode `case_read.v1.yaml`,
+# so the version bump in ADR 0029 would have left the whole suite green while
+# asserting against a policy the running system no longer loads.
+POLICY = latest_policy_path(ROOT / "policies", "case_read")
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
 
 
@@ -221,5 +224,50 @@ def test_every_decision_carries_the_policy_id_and_version():
     for facts in (case(), case(assignment_active=True), case(is_sealed=True)):
         decision = load_policy(POLICY).evaluate(subject(), facts, NOW)
         assert decision.policy_id == "ordin.case_read"
-        assert decision.policy_version == 1
+        assert decision.policy_version == load_policy(POLICY).version
         assert decision.rule_id and decision.reason
+
+
+# --- policy versioning ------------------------------------------------------------
+
+
+def test_latest_policy_path_picks_the_highest_version():
+    """Numeric, not lexical. `v10` must beat `v9`, which string sorting gets wrong."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+        folder = Path(directory)
+        for version in (1, 2, 9, 10):
+            (folder / f"demo.v{version}.yaml").write_text("{}", encoding="utf-8")
+        (folder / "demo.vdraft.yaml").write_text("{}", encoding="utf-8")
+        assert latest_policy_path(folder, "demo").name == "demo.v10.yaml"
+
+
+def test_no_test_hardcodes_a_versioned_policy_filename():
+    """The guard that makes a version bump safe.
+
+    Before `latest_policy_path` existed, four test files named `case_read.v1.yaml`
+    directly. Bumping the policy to v2 left every one of them green - asserting
+    correctly, about a file the running application no longer loads. That is the worst
+    shape a test suite can take, because the failure is invisible from inside it.
+
+    Old versions stay on disk so a decision recorded under them is still explainable;
+    nothing should *load* one except a test about versioning itself.
+    """
+    import re
+
+    # A versioned filename inside a string literal. Prose in a docstring that happens
+    # to name a policy file is not a load, and flagging it would train people to
+    # stop writing the explanation.
+    literal = re.compile(r"""["'][^"']*(?:case_read|admin|break_glass)\.v\d+\.yaml["']""")
+    offenders = []
+    for path in (ROOT / "tests").glob("test_*.py"):
+        if path.name == Path(__file__).name:
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if literal.search(line):
+                offenders.append(f"{path.name}: {line.strip()}")
+    assert not offenders, (
+        "these tests load a policy by version number, so a version bump would leave "
+        "them asserting against a file nothing runs:\n  " + "\n  ".join(offenders)
+    )

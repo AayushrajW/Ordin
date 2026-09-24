@@ -115,6 +115,31 @@ class Policy:
         )
 
 
+def latest_policy_path(directory: Path | str, stem: str) -> Path:
+    """The highest-versioned file for one policy family, e.g. `case_read` -> v2.
+
+    Old versions stay on disk on purpose: a decision already written to
+    `policy_decision` names the version that decided it, and a version nobody can read
+    any more is a decision nobody can explain. That is the whole argument for policy
+    as versioned data rather than an edited file.
+
+    The application and the tests both resolve the current version **through here**.
+    Before this existed, five test files hardcoded `case_read.v1.yaml` - so a version
+    bump would have left the suite asserting against a policy the running system no
+    longer loaded, which is the failure mode where every test is green and the answer
+    is still wrong.
+    """
+    directory = Path(directory)
+    candidates: list[tuple[int, Path]] = []
+    for path in directory.glob(f"{stem}.v*.yaml"):
+        suffix = path.name[len(stem) + 2 : -len(".yaml")]
+        if suffix.isdigit():
+            candidates.append((int(suffix), path))
+    if not candidates:
+        raise PolicyError(f"no versioned policy named {stem!r} in {directory}")
+    return max(candidates)[1]
+
+
 def _parse_condition(raw: str) -> Condition:
     text = raw.strip()
     if text.startswith("not "):

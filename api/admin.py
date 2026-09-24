@@ -479,7 +479,7 @@ async def current_access(
         assignments = (
             await conn.execute(
                 sa.text(
-                    "SELECT c.reference, u.display_name, a.valid_from, a.valid_to "
+                    "SELECT c.reference, u.id AS user_id, u.display_name, a.valid_from, a.valid_to "
                     "  FROM case_assignment a "
                     "  JOIN case_record c ON c.id = a.case_id "
                     "  JOIN app_user u ON u.id = a.user_id "
@@ -491,7 +491,7 @@ async def current_access(
         grants = (
             await conn.execute(
                 sa.text(
-                    "SELECT g.id, c.reference, u.display_name, g.purpose, g.expires_at "
+                    "SELECT g.id, c.reference, u.id AS user_id, u.display_name, g.purpose, g.expires_at "
                     "  FROM access_grant g "
                     "  JOIN case_record c ON c.id = g.case_id "
                     "  JOIN app_user u ON u.id = g.grantee_id "
@@ -502,13 +502,19 @@ async def current_access(
         ).mappings().all()
     return {
         "designations": [
-            {"reference": r["reference"], "display_name": r["display_name"],
+            # `user_id` as well as the name: the administration screen counts rows
+            # per account, and joining them on a DISPLAY NAME merges two officers who
+            # share one - which reports each of them holding the other's access, on the
+            # one screen whose job is to answer "who currently has access, and why".
+            {"reference": r["reference"], "user_id": str(r["user_id"]),
+             "display_name": r["display_name"],
              "since": r["valid_from"].isoformat() if r["valid_from"] else None}
             for r in assignments
         ],
         "grants": [
             {"grant_id": str(r["id"]), "reference": r["reference"],
-             "display_name": r["display_name"], "purpose": r["purpose"],
+             "user_id": str(r["user_id"]), "display_name": r["display_name"],
+             "purpose": r["purpose"],
              "expires_at": r["expires_at"].isoformat()}
             for r in grants
         ],

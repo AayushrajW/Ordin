@@ -19,24 +19,32 @@ export function stateLabel(key: string): string {
 export function StateRail({ state, compact = false }: { state: string; compact?: boolean }) {
   const index = STATES.findIndex((s) => s.key === state);
   return (
-    <ol className={`flex items-center ${compact ? "gap-1" : "gap-1.5"}`} aria-label={`Stage: ${stateLabel(state)}`}>
+    <ol
+      className={`flex flex-wrap items-center ${compact ? "gap-1" : "gap-3"}`}
+      aria-label={`Stage: ${stateLabel(state)}`}
+    >
       {STATES.map((s, i) => {
         const done = i < index;
         const here = i === index;
         return (
-          <li key={s.key} className="flex items-center gap-1.5">
+          <li key={s.key} className="flex items-center gap-1.5" aria-current={here ? "step" : undefined}>
             <span
-              title={s.label}
-              className={`block rounded-full transition ${compact ? "h-1.5 w-6" : "h-1.5 w-10"} ${
+              className={`block rounded-full transition ${compact ? "h-1.5 w-5" : "h-1.5 w-8"} ${
                 here ? "bg-brass-400" : done ? "bg-ink-700" : "bg-paper-300"
               }`}
             />
+            {!compact && (
+              <span
+                className={`hidden text-[0.65rem] font-semibold sm:inline ${
+                  here ? "text-ink-900" : done ? "text-ink-600" : "text-ink-400"
+                }`}
+              >
+                {s.label}
+              </span>
+            )}
           </li>
         );
       })}
-      {!compact && (
-        <li className="ml-2 text-xs font-medium text-ink-600">{stateLabel(state)}</li>
-      )}
     </ol>
   );
 }
@@ -68,7 +76,7 @@ export function when(iso: string): string {
 
 export function Stat({
   label, value, hint, tone = "ink",
-}: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: "ink" | "brass" | "caution" | "verified" }) {
+}: { label: React.ReactNode; value: React.ReactNode; hint?: React.ReactNode; tone?: "ink" | "brass" | "caution" | "verified" }) {
   const accent = {
     ink: "text-ink-900",
     brass: "text-brass-600",
@@ -79,7 +87,7 @@ export function Stat({
     <div className="surface px-5 py-4">
       <p className="eyebrow">{label}</p>
       <p className={`num mt-2 font-display text-[1.9rem] font-semibold leading-none tracking-tight ${accent}`}>{value}</p>
-      {hint && <p className="mt-2 text-xs text-ink-400">{hint}</p>}
+      {hint && <p className="mt-2 text-xs text-ink-500">{hint}</p>}
     </div>
   );
 }
@@ -101,6 +109,62 @@ export function Notice({
         <p className="font-semibold">{title}</p>
         {children && <div className="mt-0.5 text-[0.8125rem] opacity-90">{children}</div>}
       </div>
+    </div>
+  );
+}
+
+/** English primary, Hindi secondary — the convention on Indian government portals. */
+export function Bi({ en, hi, className = "" }: { en: string; hi: string; className?: string }) {
+  return (
+    <span className={`inline-flex flex-col ${className}`}>
+      <span>{en}</span>
+      <span lang="hi" className="hi mt-0.5 text-[0.72em] font-normal normal-case tracking-normal opacity-80">
+        {hi}
+      </span>
+    </span>
+  );
+}
+
+/** Collapse architecture copy so the workflow is what the screenshot shows. */
+export function TechnicalDetails({
+  summary = "Technical details",
+  children,
+}: { summary?: string; children: React.ReactNode }) {
+  return (
+    <details className="surface-quiet px-4 py-3">
+      <summary className="cursor-pointer text-[0.75rem] font-semibold text-ink-700">
+        {summary}
+      </summary>
+      <div className="mt-2 text-[0.7rem] leading-relaxed text-ink-500">{children}</div>
+    </details>
+  );
+}
+
+/** Derived chips — never a numeric “trust score”. */
+export function TrustStrip({
+  integrity,
+  disclosure,
+  sealed,
+  disposed,
+}: {
+  integrity?: "VERIFIED" | "MISMATCH" | "DISPOSED_ANCHOR_ONLY" | "PENDING" | "UNAVAILABLE" | null;
+  disclosure?: "original" | "redacted" | "none" | null;
+  sealed?: boolean;
+  disposed?: boolean;
+}) {
+  const ok = integrity === "VERIFIED";
+  return (
+    <div className="trust-strip" role="group" aria-label="Record state">
+      {ok && <span className="chip-verified"><IconCheck className="h-3 w-3" /> Verified</span>}
+      {integrity === "PENDING" && <span className="chip-signal"><IconClock className="h-3 w-3" /> Pending anchor</span>}
+      {integrity === "MISMATCH" && <span className="chip-danger"><IconX className="h-3 w-3" /> Integrity exception</span>}
+      {integrity === "DISPOSED_ANCHOR_ONLY" || disposed ? (
+        <span className="chip-draft"><IconLock className="h-3 w-3" /> Disposed · anchor only</span>
+      ) : null}
+
+      {disclosure === "original" && <span className="chip-draft">Originals</span>}
+      {disclosure === "redacted" && <span className="chip-signal"><IconLock className="h-3 w-3" /> Derivatives only</span>}
+      {sealed && <span className="chip-danger"><IconLock className="h-3 w-3" /> Restricted</span>}
     </div>
   );
 }

@@ -120,6 +120,26 @@ def _clearance_permits_sealed(
     )
 
 
+def _break_glass_active(
+    s: Subject, case: sa.Table, tables: dict, at: datetime
+) -> ColumnElement:
+    """An unexpired declaration by this subject on this case (migration 0013).
+
+    A row-level EXISTS rather than a lifted constant, because a declaration is scoped
+    to one case: the whole point is that breaking the glass on one sealed file does not
+    open every sealed file the subject is designated on.
+    """
+    b = tables["break_glass_access"]
+    return sa.exists(
+        sa.select(sa.literal(1)).where(
+            b.c.case_id == case.c.id,
+            b.c.actor_id == s.user_id,
+            b.c.declared_at <= sa.func.now(),
+            b.c.expires_at > sa.func.now(),
+        )
+    )
+
+
 def _subject_is_active(s: Subject, case: sa.Table, tables: dict, at: datetime) -> ColumnElement:
     return sa.true() if s.is_active else sa.false()
 
@@ -149,6 +169,7 @@ SQL_REGISTRY = {
     "case_is_sealed": _case_is_sealed,
     "clearance_current": _clearance_current,
     "clearance_permits_sealed": _clearance_permits_sealed,
+    "break_glass_active": _break_glass_active,
     "subject_is_active": _subject_is_active,
     "post_is_administrative": _post_is_administrative,
 }

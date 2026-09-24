@@ -1,0 +1,62 @@
+# May this subject declare an exception to this case's seal?
+#
+# A separate policy from ordin.case_read, deliberately. "Does an exception count?" is
+# a read-filter question and lives there, in a deny rule. "May you declare one?" is a
+# write question and lives here. Collapsing them into one file would mean the rule
+# that admits a grantee to a case (purpose-limited-grant) also lets that grantee
+# declare their way past a seal - which is the one route this file exists to close.
+#
+# Security invariant 3: declarative data, not code. Every predicate named here exists
+# in domain/predicates.py and is unit-tested with nothing running.
+
+policy_id: ordin.break_glass
+version: 1
+maturity: mvp
+production_adapter: OPA
+
+description: >
+  Only an officer with an in-force designation on the case, in the same organization
+  and jurisdiction, holding current but insufficient clearance, may declare a
+  break-glass on a sealed case. A grant never qualifies: an external party must not
+  be able to self-authorize past a seal, because there is nobody upstream of them to
+  answer for it. An already-cleared officer does not qualify either - nobody should
+  be trained to break glass they can walk through.
+
+rules:
+  # --- denials first ------------------------------------------------------
+  - id: inactive-subject
+    effect: deny
+    when:
+      - not subject_is_active
+
+  # The three validity clocks intersect and never union (threat AZM-06). A lapsed
+  # clearance is not a reason to need break-glass, it is a reason to be out.
+  - id: lapsed-clearance
+    effect: deny
+    when:
+      - not clearance_current
+
+  - id: not-sealed
+    effect: deny
+    when:
+      - not case_is_sealed
+
+  - id: already-cleared
+    effect: deny
+    when:
+      - clearance_permits_sealed
+
+  # --- the only ground ----------------------------------------------------
+  # The same three conditions as ordin.case_read's designated-officer rule, and
+  # not by coincidence: you may break a seal on a case that would otherwise be
+  # yours, and on no other.
+  - id: designated-officer
+    effect: allow
+    when:
+      - assignment_active
+      - same_organization
+      - same_jurisdiction
+
+  # --- terminal -----------------------------------------------------------
+  - id: default-deny
+    effect: deny

@@ -60,14 +60,17 @@ export async function POST(request: Request) {
     if (typeof versionId !== "string" || !UUID.test(versionId)) {
       return back(target, "input");
     }
-    // Normalised here so a human typing "Complainant Name" gets a valid key rather
+    // Normalised here so a human typing "Complainant Name" or "1st Witness" gets a valid key rather
     // than a validation error from the API. The API validates it again regardless.
-    const key = String(rawKey ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+    let key = String(rawKey ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    if (/^[0-9]/.test(key)) {
+      key = `field_${key}`;
+    }
     if (!/^[a-z][a-z0-9_]*$/.test(key) || typeof value !== "string" || !value.trim()) {
       return back(target, "input");
     }
     path = `/versions/${versionId}/fields`;
-    body = JSON.stringify({ field_key: key, value: value.trim() });
+    body = JSON.stringify({ field_key: key.slice(0, 64), value: value.trim().slice(0, 512) });
   } else if (intent === "redact") {
     const versionId = form.get("version_id");
     const fieldIds = form.getAll("field_id").filter(

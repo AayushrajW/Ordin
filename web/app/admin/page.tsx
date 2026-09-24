@@ -93,6 +93,7 @@ export default async function AdminPage({
       <PageHeader
         crumbs={[{ label: "Administration" }]}
         title="Administration"
+        hindi="प्रशासन"
         meta="Placing accounts, designating officers and issuing grants. Nothing here reads a case: an administrator decides who may look, and does not look."
       />
 
@@ -178,6 +179,7 @@ export default async function AdminPage({
                 <th className="px-4 py-2.5 font-semibold">Person</th>
                 <th className="px-4 py-2.5 font-semibold">Post</th>
                 <th className="px-4 py-2.5 font-semibold">Clearance</th>
+                <th className="px-4 py-2.5 font-semibold">Live access</th>
                 <th className="px-4 py-2.5 font-semibold">Last seen</th>
                 <th className="px-4 py-2.5 font-semibold" />
               </tr>
@@ -199,6 +201,21 @@ export default async function AdminPage({
                     )}
                   </td>
                   <td className="px-4 py-3 text-xs text-ink-600">{a.clearance_level}</td>
+                  <td className="px-4 py-3 text-xs text-ink-600">
+                    {(() => {
+                      // Matched on user_id. Matching on display_name merged two officers who
+                      // share a name and showed each of them the other's access.
+                      const d = (access?.designations ?? []).filter((x) => x.user_id === a.user_id).length;
+                      const g = (access?.grants ?? []).filter((x) => x.user_id === a.user_id).length;
+                      if (!d && !g) return <span className="text-ink-400">none in force</span>;
+                      return (
+                        <span>
+                          {d ? <span className="block">{d} designation{d === 1 ? "" : "s"}</span> : null}
+                          {g ? <span className="block">{g} grant{g === 1 ? "" : "s"}</span> : null}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-xs text-ink-500">
                     {a.last_login_at ? relative(a.last_login_at) : "never"}
                     {a.locked && (
@@ -257,12 +274,16 @@ export default async function AdminPage({
                 Case
               </span>
               <select name="case_id" required className="field w-full text-xs">
-                {(cases ?? []).map((c) => (
-                  <option key={c.case_id} value={c.case_id}>
-                    {c.reference}
-                    {c.is_sealed ? " — sealed" : ""}
-                  </option>
-                ))}
+                {(cases ?? []).map((c) => {
+                  const isPrimary = c.reference === "VRN-N/2026/0001";
+                  const label = isPrimary ? `VRN/26/0142 (${c.reference})` : c.reference;
+                  return (
+                    <option key={c.case_id} value={c.case_id}>
+                      {label}
+                      {c.is_sealed ? " — sealed" : ""}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <button type="submit" className="btn-primary w-full justify-center">
@@ -298,11 +319,15 @@ export default async function AdminPage({
                 Case
               </span>
               <select name="case_id" required className="field w-full text-xs">
-                {(cases ?? []).map((c) => (
-                  <option key={c.case_id} value={c.case_id}>
-                    {c.reference}
-                  </option>
-                ))}
+                {(cases ?? []).map((c) => {
+                  const isPrimary = c.reference === "VRN-N/2026/0001";
+                  const label = isPrimary ? `VRN/26/0142 (${c.reference})` : c.reference;
+                  return (
+                    <option key={c.case_id} value={c.case_id}>
+                      {label}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <div className="grid grid-cols-[1fr_7rem] gap-3">
@@ -349,44 +374,56 @@ export default async function AdminPage({
         </p>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div className="surface px-5 py-4">
-            <p className="eyebrow text-ink-400">Designations</p>
+            <div className="flex items-center justify-between">
+              <p className="eyebrow text-ink-400">Designations (Intra-station • Original)</p>
+              <span className="chip-verified text-[0.65rem]">Full Document Access</span>
+            </div>
             {(access?.designations.length ?? 0) === 0 ? (
               <p className="mt-2 text-sm text-ink-500">None in force.</p>
             ) : (
               <ul className="mt-3 space-y-2">
-                {access!.designations.map((d, i) => (
-                  <li key={i} className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="font-semibold text-ink-900">{d.display_name}</span>
-                    <span className="font-mono text-xs text-ink-500">{d.reference}</span>
-                  </li>
-                ))}
+                {access!.designations.map((d, i) => {
+                  const displayRef = d.reference === "VRN-N/2026/0001" ? "VRN/26/0142" : d.reference;
+                  return (
+                    <li key={i} className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="font-semibold text-ink-900">{d.display_name}</span>
+                      <span className="font-mono text-xs text-ink-500">{displayRef}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
           <div className="surface px-5 py-4">
-            <p className="eyebrow text-ink-400">Grants</p>
+            <div className="flex items-center justify-between">
+              <p className="eyebrow text-ink-400">Grants (Cross-organization • Redacted)</p>
+              <span className="chip-brass text-[0.65rem]">Derivative Access Only</span>
+            </div>
             {(access?.grants.length ?? 0) === 0 ? (
               <p className="mt-2 text-sm text-ink-500">None in force.</p>
             ) : (
               <ul className="mt-3 space-y-2.5">
-                {access!.grants.map((g) => (
-                  <li key={g.grant_id} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-ink-900">{g.display_name}</p>
-                      <p className="text-xs text-ink-500">
-                        <span className="font-mono">{g.reference}</span> · {g.purpose} ·
-                        expires {relative(g.expires_at)}
-                      </p>
-                    </div>
-                    <form method="post" action="/actions/admin">
-                      <input type="hidden" name="action" value="revoke" />
-                      <input type="hidden" name="grant_id" value={g.grant_id} />
-                      <button type="submit" className="btn-quiet text-xs">
-                        Revoke
-                      </button>
-                    </form>
-                  </li>
-                ))}
+                {access!.grants.map((g) => {
+                  const displayRef = g.reference === "VRN-N/2026/0001" ? "VRN/26/0142" : g.reference;
+                  return (
+                    <li key={g.grant_id} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-ink-900">{g.display_name}</p>
+                        <p className="text-xs text-ink-500">
+                          <span className="font-mono font-medium text-ink-700">{displayRef}</span> · {g.purpose} ·
+                          expires {relative(g.expires_at)}
+                        </p>
+                      </div>
+                      <form method="post" action="/actions/admin">
+                        <input type="hidden" name="action" value="revoke" />
+                        <input type="hidden" name="grant_id" value={g.grant_id} />
+                        <button type="submit" className="btn-quiet text-xs">
+                          Revoke
+                        </button>
+                      </form>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

@@ -16,13 +16,14 @@ Denied and nonexistent are the same 404 throughout, byte for byte, for the same 
 ids (threat INS-04). That is asserted, not assumed —
 `test_an_unreadable_case_and_a_missing_one_are_byte_identical`.
 """
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.deps import policy as get_policy
 from api.deps import require_subject
@@ -47,6 +48,7 @@ DOC_CLASSES = (
     "fir", "statement", "forensic_report", "charge_sheet", "court_order", "other",
 )
 
+log = logging.getLogger("ordin.api.documents")
 router = APIRouter(tags=["documents"])
 
 # Rendered at 2x for a legible scan on a laptop screen without shipping a 4 MB PNG.
@@ -59,6 +61,7 @@ class DocumentOut(BaseModel):
     id: str
     title: str
     disclosure: str
+    case_id: str | None = None
     versions: list["VersionOut"] = []
 
 
@@ -279,6 +282,7 @@ async def list_documents(
                     id=str(d["id"]),
                     title=d["title"],
                     disclosure=disclosure.value,
+                    case_id=case_id,
                     versions=await _versions(conn, version_ids),
                 )
             )
@@ -342,6 +346,7 @@ async def get_document(
             id=str(row["id"]),
             title=row["title"],
             disclosure=disclosure.value,
+            case_id=str(row["case_id"]),
             versions=await _versions(conn, version_ids),
         )
 
@@ -570,6 +575,11 @@ async def version_page(
             await conn.commit()
             raise HTTPException(status_code=409, detail="integrity_mismatch")
 
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            if page < 0 or page >= doc.page_count:
+                await conn.commit()
+                raise NOT_FOUND
+
         await append_audit(
             conn,
             case_id=case_id,
@@ -583,8 +593,6 @@ async def version_page(
 
     stamp = now.strftime("%Y-%m-%d %H:%M UTC")
     with fitz.open(stream=data, filetype="pdf") as doc:
-        if page < 0 or page >= doc.page_count:
-            raise NOT_FOUND
         target = doc[page]
         _watermark(target, viewer=viewer, stamp=stamp)
         pixmap = target.get_pixmap(matrix=fitz.Matrix(PAGE_ZOOM, PAGE_ZOOM))
@@ -753,6 +761,8 @@ async def redaction_plan(
         # Geometry for a tampered document is not a smaller answer, it is the wrong
         # question. Refuse it the same way the render does.
         raise HTTPException(status_code=409, detail="integrity_mismatch") from None
+    if data is None:
+        raise HTTPException(status_code=409, detail="bytes_unavailable")
     width = height = 0.0
     if data is not None:
         with fitz.open(stream=data, filetype="pdf") as doc:
@@ -923,7 +933,11 @@ async def upload_document(
             if doc_class not in DOC_CLASSES:
                 raise HTTPException(status_code=422, detail="unknown_doc_class")
             document_id, version_id, sha256, _source = await pipeline.ingest(
-                conn, case_id=case_id, filename=_clean_filename(filename), data=data
+                conn,
+                case_id=case_id,
+                filename=_clean_filename(filename),
+                data=data,
+                doc_class=doc_class,
             )
         except UploadRejected as rejected:
             await conn.rollback()
@@ -1160,3 +1174,183 @@ async def enter_field(
         entered_by=str(fresh["entered_by"]) if fresh["entered_by"] else None,
     )
 
+
+
+# --- disposal ---------------------------------------------------------------------
+
+# Enumerated in migration 0005 as a CHECK constraint, and repeated here so a bad value
+# is a 422 at the edge rather than an IntegrityError from the driver.
+DISPOSAL_BASES = (
+    "retention_expiry", "court_order", "erroneous_upload", "superseded_original",
+)
+
+
+class DisposeRequest(BaseModel):
+    basis: str = Field(description="One of " + ", ".join(DISPOSAL_BASES))
+
+    @field_validator("basis")
+    @classmethod
+    def _known_basis(cls, value: str) -> str:
+        if value not in DISPOSAL_BASES:
+            raise ValueError(f"basis must be one of {DISPOSAL_BASES}")
+        return value
+
+
+@router.post("/versions/{version_id}/dispose", status_code=200)
+async def dispose_version(
+    version_id: str,
+    body: DisposeRequest,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """Lawfully destroy a version's bytes, keeping the anchor and the record of why.
+
+    This is the writer `DISPOSAL_RECORDED` never had, and the reason
+    `DISPOSED_ANCHOR_ONLY` was a state nothing in the running system could reach. An
+    integrity model with an unreachable state is a model with an untested branch in
+    the one place that matters.
+
+    **Anchored first, or not at all.** A version with no anchor cannot be disposed
+    (409 `not_anchored`). Destroying bytes you were never able to attest to leaves
+    `verify()` returning UNAVAILABLE for ever - an absence nobody can explain - and
+    "we destroyed it lawfully" is a claim that needs the anchor to be worth anything.
+
+    **The derived text goes with it.** Threat AR-13 says disposal does not reach
+    derived text, and a disposal that left the OCR of a destroyed document sitting in
+    `ocr_text` - searchable - would be a disposal in name only. The words, the word
+    boxes and the extracted fields are deleted in the same transaction.
+
+    **The bytes go only if nothing else needs them.** The store is content-addressed,
+    so one file can back several versions. The address is deleted only when no
+    surviving version references it; otherwise the row is disposed and the file stays,
+    which is correct and is why `verify()` checks disposal *before* the bytes.
+
+    The honest claim is bounded: **the stored original is destroyed.** Write-ahead
+    logs, snapshots and any backup taken before now are out of reach of this code, and
+    saying "the document is destroyed" would be a claim this build cannot support
+    (AR-13). Disposal is also unilateral - two-person approval was cut (AR-15) - so it
+    rests on attribution, which is why the audit row is written in the same
+    transaction as the deletion.
+    """
+    now = datetime.now(timezone.utc)
+    engine = request.app.state.engine
+    blobs = request.app.state.blobs
+
+    async with engine.begin() as conn:
+        _, case_id, disclosure = await _resolve_version(
+            conn, policy, subject, version_id, now
+        )
+        # Destroying a document you are only permitted to see redacted is not a thing
+        # to allow, for the same reason attesting to one is not (ADR 0014).
+        _require_original(disclosure)
+
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT dv.sha256, dv.lifecycle_state, "
+                    "       a.content_sha256 IS NOT NULL AS anchored, "
+                    "       EXISTS (SELECT 1 FROM disposition x WHERE x.version_id = dv.id) "
+                    "         AS already "
+                    "FROM document_version dv "
+                    "LEFT JOIN anchor_record a ON a.version_id = dv.id "
+                    "WHERE dv.id = :v"
+                ),
+                {"v": version_id},
+            )
+        ).mappings().one()
+
+        if row["already"] or row["lifecycle_state"] == "disposed":
+            # Idempotent in effect but reported honestly: a second disposal is not a
+            # second lawful act, and silently succeeding would put a second row on
+            # the chain for something that did not happen.
+            raise HTTPException(status_code=409, detail="already_disposed")
+        if not row["anchored"]:
+            raise HTTPException(status_code=409, detail="not_anchored")
+
+        sha256 = row["sha256"]
+        await conn.execute(
+            sa.text(
+                "UPDATE document_version SET lifecycle_state = 'disposed' WHERE id = :v"
+            ),
+            {"v": version_id},
+        )
+        await conn.execute(
+            sa.text(
+                "INSERT INTO disposition (id, version_id, disposed_at, disposed_by, basis) "
+                "VALUES (:i, :v, :t, :u, :b)"
+            ),
+            {"i": str(uuid.uuid4()), "v": version_id, "t": now,
+             "u": subject.user_id, "b": body.basis},
+        )
+        # AR-13's first half. The search index is a functional GIN over ocr_text
+        # (migration 0010), so deleting the row removes the document from search too.
+        for statement in (
+            "DELETE FROM extracted_field WHERE version_id = :v",
+            "DELETE FROM ocr_word WHERE version_id = :v",
+            "DELETE FROM ocr_text WHERE version_id = :v",
+        ):
+            await conn.execute(sa.text(statement), {"v": version_id})
+
+        # Is any surviving version still backed by this address?
+        shared = (
+            await conn.execute(
+                sa.text(
+                    "SELECT count(*) FROM document_version "
+                    "WHERE sha256 = :h AND id <> :v AND lifecycle_state <> 'disposed'"
+                ),
+                {"h": sha256, "v": version_id},
+            )
+        ).scalar_one()
+
+        await append_audit(
+            conn,
+            case_id=case_id,
+            actor_id=subject.user_id,
+            action=AuditAction.DISPOSAL_RECORDED,
+            object_type="version",
+            object_id=version_id,
+            at=now,
+        )
+
+    # Outside the transaction, deliberately. A filesystem unlink cannot be rolled
+    # back, so it happens only after the record of it has committed: a disposal
+    # recorded with the bytes still present is recoverable, and bytes destroyed with
+    # no record is the failure this ordering exists to avoid.
+    bytes_destroyed = False
+    if not shared:
+        bytes_destroyed = blobs.delete(sha256)
+
+    log.info(
+        "version disposed",
+        extra={"version_id": version_id, "case_id": case_id, "basis": body.basis,
+               "bytes_destroyed": bytes_destroyed},
+    )
+    return {
+        "version_id": version_id,
+        "lifecycle_state": "disposed",
+        "basis": body.basis,
+        "bytes_destroyed": bytes_destroyed,
+        "shared_address_retained": bool(shared),
+        # Two sentences, chosen by what actually happened. Returning the first
+        # unconditionally said "the stored original is destroyed" on the exact path
+        # where this route had deliberately KEPT the bytes because another version
+        # still relied on them - the system claiming an erasure it had just decided
+        # not to perform. The caller repeats whatever it is told, so being right here
+        # is what stops a false destruction notice reaching a screen.
+        "note": (
+            (
+                "The derived text is removed and this version is disposed, but the "
+                "stored bytes were RETAINED: another version of this case is backed by "
+                "the same content address, and destroying them would have destroyed it "
+                "too. This version verifies as DISPOSED_ANCHOR_ONLY."
+            )
+            if shared
+            else (
+                "The stored original is destroyed and its derived text removed. "
+                "Backups, snapshots and write-ahead logs taken before now are out of "
+                "reach of this system (AR-13). The anchor and this disposition record "
+                "survive, so the version verifies as DISPOSED_ANCHOR_ONLY."
+            )
+        ),
+    }

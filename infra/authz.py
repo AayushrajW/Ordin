@@ -22,7 +22,15 @@ from sqlalchemy.sql import Select
 from domain.policy import Decision, Policy
 from domain.subject import CaseFacts, Subject
 from infra.authz_sql import case_read_filter
-from infra.tables import AUTHZ_TABLES, access_grant, app_user, case_assignment, case_record, post
+from infra.tables import (
+    AUTHZ_TABLES,
+    access_grant,
+    app_user,
+    break_glass_access,
+    case_assignment,
+    case_record,
+    post,
+)
 
 
 async def load_subject(conn, user_id: str) -> Subject | None:
@@ -98,6 +106,22 @@ async def load_case_facts(conn, subject: Subject, case_id: str, at: datetime) ->
         ).first()
     )
 
+    # Break-glass (migration 0013). Same shape as the assignment check and for the
+    # same reason: the SQL predicate and this one must answer identically, or the
+    # agreement test is the only thing standing between a seal and a silent bypass.
+    break_glass_active = bool(
+        (
+            await conn.execute(
+                sa.select(sa.literal(1)).where(
+                    break_glass_access.c.case_id == case_id,
+                    break_glass_access.c.actor_id == subject.user_id,
+                    break_glass_access.c.declared_at <= at,
+                    break_glass_access.c.expires_at > at,
+                )
+            )
+        ).first()
+    )
+
     grants = (
         await conn.execute(
             sa.select(access_grant.c.granted_by, access_grant.c.grantee_id, access_grant.c.purpose)
@@ -124,6 +148,7 @@ async def load_case_facts(conn, subject: Subject, case_id: str, at: datetime) ->
         grant_active=bool(grants),
         grant_is_self_issued=bool(grants) and not usable,
         grant_purpose=usable[0].purpose if usable else None,
+        break_glass_active=break_glass_active,
     )
 
 

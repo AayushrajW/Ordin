@@ -39,6 +39,11 @@ const FAMILY: Record<string, string> = {
   AUDIT: "Audit chain",
   INTEG: "Integrity",
   SEC: "Transport & headers",
+  SEARCH: "Search",
+  CRYPT: "Encryption",
+  SEAL: "Sealed records",
+  EXPORT: "Export",
+  DISPOSE: "Disposal",
 };
 
 const SEVERITY: Record<Result["severity"], string> = {
@@ -103,9 +108,10 @@ export default async function SentinelPage() {
       <PageHeader
         eyebrow="Live security verification"
         title="Sentinel"
+        hindi="प्रहरी"
         meta="Each row is a claim this system makes, expressed as something that can visibly go red — and run against the live application on every load."
         actions={
-          <a href={`/sentinel?t=${Date.now()}`} className="btn-primary">
+          <a href="/sentinel?run=1" className="btn-primary">
             <IconShield className="h-4 w-4" /> Run again
           </a>
         }
@@ -140,19 +146,22 @@ export default async function SentinelPage() {
                     {critical} critical scenarios · nothing stored, nothing cached
                   </p>
                 </div>
-                <dl className="grid grid-cols-3 gap-6 text-center">
-                  {(["critical", "high", "medium"] as const).map((s) => {
-                    const all = results.filter((r) => r.severity === s);
-                    const ok = all.filter((r) => r.outcome === "pass").length;
+              </div>
+              <dl className="relative grid gap-2 border-t border-ink-700 px-8 py-5 sm:grid-cols-2 lg:grid-cols-4">
+                  {families.map(([family, rows]) => {
+                    const ok = rows.filter((r) => r.outcome === "pass").length;
                     return (
-                      <div key={s}>
-                        <dt className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-400">{s}</dt>
-                        <dd className="num mt-1 font-display text-2xl font-semibold text-white">{ok}<span className="text-sm text-ink-500">/{all.length}</span></dd>
+                      <div key={family} className="rounded-lg border border-ink-700 bg-ink-900/40 px-3 py-2">
+                        <dt className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-400">
+                          {FAMILY[family] ?? family}
+                        </dt>
+                        <dd className={`num mt-1 font-display text-lg font-semibold ${ok === rows.length ? "text-brass-300" : "text-white"}`}>
+                          {ok}/{rows.length}
+                        </dd>
                       </div>
                     );
                   })}
-                </dl>
-              </div>
+              </dl>
             </section>
 
             {families.map(([family, rows]) => (
@@ -179,9 +188,9 @@ export default async function SentinelPage() {
                           <span className={SEVERITY[r.severity]}>{r.severity}</span>
                           <IconChevron className="h-4 w-4 text-ink-300 transition group-open:rotate-90" />
                         </summary>
-                        <div className="grid gap-4 border-t border-paper-200 bg-paper-50/60 px-5 py-4 md:grid-cols-3">
+                        <div className="grid gap-4 border-t border-paper-200 bg-paper-50/60 px-5 py-4 md:grid-cols-4">
                           <div>
-                            <p className="eyebrow">Setup</p>
+                            <p className="eyebrow">Setup · attack</p>
                             <p className="mt-1 text-[0.8125rem] leading-relaxed text-ink-700">{r.setup}</p>
                           </div>
                           <div>
@@ -193,6 +202,13 @@ export default async function SentinelPage() {
                             <p className={`mt-1 text-[0.8125rem] font-medium leading-relaxed ${r.outcome === "pass" ? "text-verified-700" : "text-danger-700"}`}>
                               {r.actual}
                             </p>
+                          </div>
+                          <div>
+                            <p className="eyebrow">Verdict</p>
+                            <p className={`mt-1 text-sm font-semibold uppercase tracking-wide ${r.outcome === "pass" ? "text-verified-700" : r.outcome === "fail" ? "text-danger-700" : "text-caution-700"}`}>
+                              {r.outcome}
+                            </p>
+                            <p className="mt-1 text-[0.6875rem] text-ink-500">Live against this process. Nothing cached.</p>
                           </div>
                         </div>
                       </details>

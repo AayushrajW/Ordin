@@ -152,40 +152,97 @@ def test_sanitisation_is_deterministic():
     first, second = sanitise(hostile), sanitise(hostile)
     assert first.data == second.data
     assert first.sha256 == second.sha256
-    # If this ever fails *intermittently*, it is the limit of the guarantee rather than
-    # a regression: ADR 0017 records that mupdf occasionally compacts object numbering
-    # differently in a long-lived process. Back-to-back calls are the tightest case and
-    # have been stable. `test_pipeline_idempotency` once asserted the same property far
-    # apart in a long process and failed roughly one run in three, in a different test
-    # each time — which is how an afternoon disappears if nobody has written this down.
 
 
-def test_sanitising_an_already_sanitised_file_is_clean_but_not_byte_identical():
-    """The limit of the determinism guarantee, asserted rather than assumed.
+def test_sanitising_an_already_sanitised_file_reproduces_it_exactly():
+    """Sanitising is its own fixed point, and for a while it was not.
 
-    Sanitising is deterministic — the same input always gives the same output, which is
-    what content-addressed storage requires and what the test above proves. It is **not**
-    a fixed point: mupdf's save compacts object numbering differently on a second pass,
-    so `sanitise(sanitise(x))` occasionally differs from `sanitise(x)` by a few bytes.
-    Reproduced at roughly one specimen in twenty-five.
+    The identifier is derived from the document with its own `/ID` zeroed, so a second
+    pass over sanitised bytes must land on exactly the same file. That is what makes
+    `sanitise` safe to run on anything, including its own output.
 
-    An earlier version of this test asserted the fixed point and passed most of the
-    time, which is the worst kind of test: it failed once in a full run, in a different
-    file each time, and looked like flakiness rather than like a property that was never
-    guaranteed.
+    **This test used to assert the opposite**, and the reasoning behind it was wrong in
+    an instructive way. `sanitise(sanitise(x))` did differ from `sanitise(x)` for about
+    one specimen in twenty-five, and that was written up as an inherent limit - mupdf
+    compacting object numbering on a second pass - and recorded in ADR 0017 as a
+    property that was never guaranteed. It was none of those things. A PDF string is
+    written in one of two syntaxes, hex or literal, and `_TRAILER_ID` matched only hex,
+    so when mupdf chose a literal the normalisation silently did not happen and the
+    random identifier survived. One regex, not a quirk of the library.
 
-    Nothing in the system re-ingests its own output, so this costs nothing today. What
-    it would cost, if that changed: re-uploading an exported sanitised file could create
-    one extra version. Recorded in ADR 0017 rather than left to be rediscovered.
+    The diagnosis mattered more than the bug: having written "not guaranteed" into an
+    ADR and into two test docstrings, every later intermittent failure had a ready
+    explanation, and the real cause was protected by it for weeks.
     """
     once = sanitise(_specimen(js=True))
     twice = sanitise(once.data)
 
+    assert twice.sha256 == once.sha256, (
+        "a second pass produced different bytes; the trailer /ID is not being "
+        "normalised on every path"
+    )
     assert twice.removed == [], "a second pass found active content the first left behind"
     assert active_constructs(twice.data) == []
     with fitz.open(stream=twice.data, filetype="pdf") as doc:
         assert doc.page_count == 1
         assert "Anjali Bhosle" in doc[0].get_text()
+
+
+def test_the_trailer_id_is_normalised_in_both_pdf_string_syntaxes():
+    """The regression test for the actual defect, at the unit rather than the surface.
+
+    A PDF string is `<48656c6c6f>` or `(Hello)`, and a writer picks per value. mupdf
+    emits a random /ID as a literal when the bytes happen to be mostly printable, which
+    is why this surfaced as "roughly one file in thirty" rather than as a clean failure.
+    Driving both syntaxes directly means a future narrowing of the pattern fails here,
+    where the cause is obvious, instead of as an intermittent digest mismatch four
+    modules away.
+    """
+    from infra.intake import _fix_trailer_id
+
+    body = (
+        b"%PDF-1.7\n1 0 obj\n<</Type/Catalog>>\nendobj\ntrailer\n<</Size 2/Root 1 0 R"
+    )
+
+    hex_form = (
+        body + b"/ID[<0123456789ABCDEF0123456789ABCDEF>"
+        b"<FEDCBA9876543210FEDCBA9876543210>]>>"
+    )
+    # The shape that broke it: a hex first half and a LITERAL second half, exactly as
+    # mupdf writes one when the random bytes are mostly printable.
+    literal_form = (
+        body + b"/ID[<0123456789ABCDEF0123456789ABCDEF>"
+        b"( p\\325\\270U\\360O=mdz)]>>"
+    )
+    mixed_form = body + b"/ID[(abc\\)def)(ghi)]>>"
+
+    for label, document in (
+        ("hex", hex_form), ("literal", literal_form), ("both literal", mixed_form)
+    ):
+        fixed = _fix_trailer_id(document)
+        assert b"/ID[<" in fixed, label
+        # Normalised to hex, both halves equal, and nothing of the original left.
+        identifier = fixed.split(b"/ID[<")[1][:32]
+        assert fixed.count(identifier) == 2, label
+        assert _fix_trailer_id(fixed) == fixed, f"{label}: not a fixed point"
+
+
+def test_an_unparseable_trailer_id_is_a_failure_not_a_no_op():
+    """Invariant 2, at the exact line where it was being broken.
+
+    The original returned the document unchanged when the pattern missed. A control
+    that silently does nothing is the failure this module's own docstring warns about
+    three times, and it is worse here than a refusal would be: the caller gets bytes
+    described as deterministic that are not.
+    """
+    from infra.intake import _fix_trailer_id
+
+    malformed = (
+        b"%PDF-1.7\ntrailer\n<</Size 2/Root 1 0 R/ID[ this is not a pdf string ]>>"
+    )
+    with pytest.raises(UploadRejected) as raised:
+        _fix_trailer_id(malformed)
+    assert raised.value.code is RejectionCode.SANITISATION_FAILED
 
 
 # --- refusals -----------------------------------------------------------------

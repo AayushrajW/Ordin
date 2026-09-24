@@ -1,0 +1,83 @@
+# Case read authorization.
+#
+# Versioned data, not code (security invariant 3). Every rule id that fires is
+# persisted with the decision, so "which rule let that through?" has an answer.
+#
+# Rule order matters: first match wins, and denies are written first so a seal
+# cannot be out-voted by a later allow.
+#
+# Every predicate named here must exist in domain/predicates.py. The loader resolves
+# them at read time, so a typo is a startup failure rather than a silent condition
+# that never fires. The SQL side in infra/authz_sql.py implements the same names, and
+# tests/test_policy_sql_agreement.py asserts the two agree over the seeded data -
+# without that, this file would be decorative while the query did something else.
+#
+# --- what changed in v2 -------------------------------------------------------
+# `sealed-without-clearance` gained a third condition: `not break_glass_active`.
+# v1 is kept on disk unchanged, because decisions already written to
+# policy_decision recorded "ordin.case_read v1" and a version that no longer
+# exists cannot be explained. That is the entire argument for versioning policy
+# as data rather than editing it in place.
+
+policy_id: ordin.case_read
+version: 2
+maturity: mvp
+production_adapter: OPA
+
+description: >
+  A case is readable through an in-force designation in the same organization and
+  jurisdiction, or through a case-scoped, unexpired, non-self-issued grant. Sealed
+  cases additionally require clearance beyond the ordinary level, or a declared and
+  unexpired break-glass by the same subject on the same case. Seniority grants
+  nothing on its own: there is no rule here that mentions rank.
+
+rules:
+  # --- denials first ------------------------------------------------------
+  - id: inactive-subject
+    effect: deny
+    when:
+      - not subject_is_active
+
+  - id: lapsed-clearance
+    effect: deny
+    when:
+      - not clearance_current
+
+  # Break-glass appears here and nowhere else, and that placement is the whole
+  # design. It sits in a *deny* rule, so it can only subtract an obstacle from a
+  # path the subject already had. Moved into an allow rule it would become a
+  # master key: a written excuse that opens any sealed case in the system.
+  #
+  # Declaring one is governed by policies/break_glass.v1.yaml, which requires an
+  # in-force designation and refuses a grantee. Two policies rather than one,
+  # because "may I declare an exception" and "does the exception count" are
+  # different questions and only the second belongs in the read filter.
+  - id: sealed-without-clearance
+    effect: deny
+    when:
+      - case_is_sealed
+      - not clearance_permits_sealed
+      - not break_glass_active
+
+  # --- grounds for access -------------------------------------------------
+  # Designation is decisive, and it is still bounded by organization and
+  # jurisdiction: a case that moves out of your jurisdiction stops being yours
+  # even while the assignment row survives.
+  - id: designated-officer
+    effect: allow
+    when:
+      - assignment_active
+      - same_organization
+      - same_jurisdiction
+
+  # The only route across an organization boundary. Never a role.
+  - id: purpose-limited-grant
+    effect: allow
+    when:
+      - grant_active
+      - grant_not_self_issued
+
+  # --- terminal -----------------------------------------------------------
+  # Required by the loader. Deny by default, fail closed.
+  - id: default-deny
+    effect: deny

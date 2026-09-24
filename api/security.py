@@ -53,15 +53,39 @@ SECURITY_HEADERS = {
 }
 
 
+# How often to drop keys nobody has used for a full window. Every call would be
+# O(keys); never would leak one dict entry per distinct caller for the life of the
+# process, which is what the previous delete-then-reinsert actually did - it removed
+# the key and immediately recreated it through the defaultdict on the next line.
+_SWEEP_EVERY = 512
+
+
 class SlidingWindow:
     def __init__(self, limit: int, seconds: float = 60.0) -> None:
         self.limit = limit
         self.seconds = seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._calls = 0
+
+    def _sweep(self, now: float) -> None:
+        """Drop keys whose last hit has left the window. Amortised, not per-call.
+
+        The map is keyed on a session fingerprint or a client address, so without this
+        a long-running process accumulates one entry per caller it has ever seen. Not
+        an attack on its own; it is the thing that turns a busy week into an OOM on a
+        container capped at 256 MiB.
+        """
+        self._calls += 1
+        if self._calls % _SWEEP_EVERY:
+            return
+        stale = [k for k, hits in self._hits.items() if not hits or now - hits[-1] >= self.seconds]
+        for key in stale:
+            del self._hits[key]
 
     def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
         """(allowed, seconds until the oldest hit leaves the window)."""
         now = time.monotonic() if now is None else now
+        self._sweep(now)
         hits = self._hits[key]
         while hits and now - hits[0] >= self.seconds:
             hits.popleft()
@@ -77,11 +101,16 @@ def _fingerprint(value: str) -> str:
 
 class SecurityMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, *, session_limit: int = 30, write_limit: int = 120,
-                 render_limit: int = 120) -> None:
+                 render_limit: int = 120, export_limit: int = 20) -> None:
         super().__init__(app)
         self.sessions = SlidingWindow(session_limit)
         self.writes = SlidingWindow(write_limit)
         self.renders = SlidingWindow(render_limit)
+        # Tighter than a page render, and separate from it. An export is the one read
+        # that both leaves the system with bytes in hand and builds an archive in
+        # memory, so the two reasons to bound it - AR-17's exfiltration rate and the
+        # 256 MiB container - point the same way.
+        self.exports = SlidingWindow(export_limit)
 
     def _bucket(self, request: Request) -> tuple[SlidingWindow, str] | None:
         client = request.client.host if request.client else "unknown"
@@ -98,6 +127,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             return self.sessions, f"addr:{client}"
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             return self.writes, who
+        # **Export is a GET, so it fell through every bucket.** The most expensive
+        # route in the application and the one AR-17 is written about was the only
+        # unmetered one: a designated officer could pull every case they hold as fast
+        # as the network allowed, and each case export builds a zip in memory. Matched
+        # before the render bucket because neither path overlaps, and named explicitly
+        # rather than by method, so a future GET does not inherit the limit by accident.
+        if path.endswith("/export"):
+            return self.exports, who
         if path.endswith("/page.png"):
             return self.renders, who
         return None

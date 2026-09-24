@@ -23,7 +23,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from domain.policy import load_policy
+from domain.policy import latest_policy_path, load_policy
 from infra.authz import authorized_case_ids, load_case_facts, load_subject
 from infra.authz_sql import SQL_REGISTRY
 from infra.tables import AUTHZ_TABLES, app_user, case_record
@@ -31,7 +31,10 @@ from infra.tables import AUTHZ_TABLES, app_user, case_record
 pytestmark = pytest.mark.requires_db
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = ROOT / "policies" / "case_read.v1.yaml"
+# Resolved, never spelled out. Five test files used to hardcode `case_read.v1.yaml`,
+# so the version bump in ADR 0029 would have left the whole suite green while
+# asserting against a policy the running system no longer loads.
+POLICY = latest_policy_path(ROOT / "policies", "case_read")
 
 
 @pytest.fixture

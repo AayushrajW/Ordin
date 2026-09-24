@@ -170,7 +170,8 @@ def configured(name: str, default: str | None = None) -> str | None:
         for line in env_file.read_text(encoding="utf-8").splitlines():
             key, sep, value = line.partition("=")
             if sep and key.strip() == name and value.strip():
-                return value.strip()
+                value = value.strip().strip("'\"")
+                return value
     return default
 
 

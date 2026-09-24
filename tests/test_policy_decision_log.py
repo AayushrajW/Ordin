@@ -20,7 +20,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from domain.policy import load_policy
+from domain.policy import latest_policy_path, load_policy
 from domain.subject import CaseFacts
 from infra.authz import load_subject
 from infra.decisions import record_decision
@@ -29,7 +29,10 @@ from infra.tables import app_user, case_record
 pytestmark = pytest.mark.requires_db
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = ROOT / "policies" / "case_read.v1.yaml"
+# Resolved, never spelled out. Five test files used to hardcode `case_read.v1.yaml`,
+# so the version bump in ADR 0029 would have left the whole suite green while
+# asserting against a policy the running system no longer loads.
+POLICY = latest_policy_path(ROOT / "policies", "case_read")
 
 
 @pytest.fixture
@@ -77,7 +80,9 @@ async def test_a_decision_is_persisted_with_its_policy_id(ctx):
     assert stored, "nothing was written"
     last = stored[-1]
     assert last["policy_id"] == "ordin.case_read"
-    assert last["policy_version"] == 1
+    # The version the app runs, not a literal: a decision row that named a version
+    # nobody loads is exactly the drift this assertion is here to catch.
+    assert last["policy_version"] == policy.version
     assert last["rule_id"] == decision.rule_id
     assert last["effect"] == decision.effect.value
 

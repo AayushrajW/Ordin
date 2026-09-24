@@ -33,14 +33,17 @@ export default async function SignupPage({
   const { error } = await searchParams;
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-5 py-16">
+    <main className="min-h-screen bg-paper-100">
+      <div className="tricolor" aria-hidden />
+      <div className="mx-auto flex w-full max-w-md flex-col justify-center px-5 py-16">
       <div className="mb-8 flex items-center gap-3">
         <Seal className="h-10 w-10 text-brass-500" />
         <div>
           <p className="font-serif text-xl font-semibold tracking-tight text-ink-900">Ordin</p>
-          <p className="text-[0.7rem] uppercase tracking-[0.18em] text-ink-400">
+          <p className="text-[0.7rem] uppercase tracking-[0.18em] text-ink-500">
             Evidence registry
           </p>
+          <p lang="hi" className="hi text-sm text-ink-500">साक्ष्य अभिलेख</p>
         </div>
       </div>
 
@@ -48,6 +51,7 @@ export default async function SignupPage({
         <h1 className="font-serif text-2xl font-semibold tracking-tight text-ink-900">
           Request an account
         </h1>
+        <p lang="hi" className="hi mt-1 text-sm text-ink-500">खाता अनुरोध</p>
         <p className="mt-1.5 text-xs leading-relaxed text-ink-500">
           This creates an account and nothing else. It holds no post, so it can open no
           case until an administrator places it. You cannot choose your own organization
@@ -103,6 +107,7 @@ export default async function SignupPage({
             Sign in
           </Link>
         </p>
+      </div>
       </div>
     </main>
   );

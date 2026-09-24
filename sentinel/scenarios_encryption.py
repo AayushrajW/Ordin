@@ -113,8 +113,6 @@ async def the_pipeline_writes_sealed_blobs(ctx) -> str:
 
     _require_key(ctx)
     await _sign_in(ctx, "officer")
-    cases = (await ctx.client.get("/cases?limit=50")).json()
-    assert cases, "the officer can see no case at all"
 
     # **Unique bytes every run, deliberately.** The store is content-addressed, so
     # `put` returns early when the address already exists — and the specimen statement
@@ -138,7 +136,7 @@ async def the_pipeline_writes_sealed_blobs(ctx) -> str:
             anchors=LocalAnchorStore(),
         ).run(
             conn,
-            case_id=uuid.UUID(cases[0]["id"]),
+            case_id=uuid.UUID(ctx.ids["primary_case"]),
             filename=f"crypt-{uuid.uuid4().hex[:8]}.pdf",
             data=unique,
             actor_id=actor,

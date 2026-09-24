@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       {
         method: "POST",
         headers: {
-          "content-type": "application/pdf",
+          "content-type": file.type || "application/octet-stream",
           ...(token ? { cookie: `ordin_session=${token}` } : {}),
         },
         body: await file.arrayBuffer(),

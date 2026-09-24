@@ -44,8 +44,12 @@ export default async function HealthPage() {
 
   return (
     <Shell subject={subject} returnTo="/health" active="health" voice={{ briefing }}>
-      <PageHeader eyebrow="Operations" title="System health"
-                  meta="Four containers on one machine, no network egress. This page renders health only and enforces nothing." />
+      <PageHeader
+        eyebrow="Operations"
+        title="System health"
+        hindi="प्रणाली स्वास्थ्य"
+        meta="Four containers on one machine, no network egress. This page renders health only and enforces nothing."
+      />
       <div className="mx-auto max-w-3xl space-y-6 px-6 py-8 lg:px-10">
         <section className={`relative overflow-hidden rounded-2xl border px-7 py-6 ${
           healthy ? "border-verified-100 bg-gradient-to-br from-verified-50 to-white" : "border-danger-100 bg-gradient-to-br from-danger-50 to-white"}`}>

@@ -46,9 +46,11 @@ async def _ensure_document(ctx) -> tuple[str, str]:
     root = Path(__file__).resolve().parents[1]
 
     await _sign_in(ctx, "officer")
-    cases = (await ctx.client.get("/cases?limit=50")).json()
-    assert cases, "the officer can see no case at all; the seed is not what it was"
-    case_id = cases[0]["id"]
+    # The case resolved in sentinel/context.py by its RELATIONSHIPS - designated
+    # officer plus a live grant to the grantee - rather than "the officer's first case
+    # by reference", which quietly became a different case as soon as another scenario
+    # registered one.
+    case_id = ctx.ids["primary_case"]
 
     async with ctx.engine.begin() as conn:
         actor = (

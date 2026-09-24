@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from api.main import create_app
-from domain.policy import load_policy
+from domain.policy import latest_policy_path, load_policy
 from domain.subject import CaseFacts, Subject
 from infra.tables import app_user, case_record
 
@@ -111,7 +111,7 @@ async def test_the_admin_policy_names_no_predicate_that_reads_the_case(live_sett
     """
     from pathlib import Path
 
-    policy = load_policy(Path("policies") / "admin.v1.yaml")
+    policy = load_policy(latest_policy_path(Path("policies"), "admin"))
     case_reading = {
         "assignment_active",
         "same_organization",

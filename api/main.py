@@ -20,6 +20,7 @@ from api.auth import router as auth_router
 from api.cases import router as cases_router
 from api.config import Settings
 from api.documents import router as documents_router
+from api.export import router as export_router
 from api.health import build_report
 from api.logging import CorrelationIdMiddleware, configure_logging
 from api.search import router as search_router
@@ -27,7 +28,7 @@ from api.sentinel_routes import router as sentinel_router
 from api.security import SecurityMiddleware
 from api.session import router as session_router
 from domain.completeness import load_completeness_policy
-from domain.policy import load_policy
+from domain.policy import latest_policy_path, load_policy
 from infra.blobstore import LocalBlobStore
 from infra.crypto import EnvironmentMasterKey
 
@@ -78,11 +79,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # policy must stop the process rather than deny every request at runtime while
     # looking like an outage (domain/policy.py raises PolicyError at load).
     policies = Path(__file__).resolve().parents[1] / "policies"
-    app.state.policy = load_policy(policies / "case_read.v1.yaml")
+    # `latest_policy_path` rather than a literal filename: old versions stay on disk
+    # so a decision recorded under them can still be explained, and the tests resolve
+    # the current one through the same function, so a version bump cannot leave the
+    # suite asserting against a policy nothing runs.
+    app.state.policy = load_policy(latest_policy_path(policies, "case_read"))
     # Administrative capability is decided by policy too, for the same reason and
     # with the same failure mode: a bad file stops the process rather than denying
     # every request while looking like an outage.
-    app.state.admin_policy = load_policy(policies / "admin.v1.yaml")
+    app.state.admin_policy = load_policy(latest_policy_path(policies, "admin"))
+    # "May you declare an exception to a seal" is a separate question from "does the
+    # exception count", so it is a separate policy (ADR 0029). Merging them would let
+    # the rule that admits a grantee to a case also let that grantee past a seal.
+    app.state.break_glass_policy = load_policy(latest_policy_path(policies, "break_glass"))
     # Procedural configuration rather than authorization, but loaded the same way
     # and for the same reason: a malformed file stops the process instead of
     # quietly reporting every case complete.
@@ -110,6 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_router)
     app.include_router(cases_router)
     app.include_router(documents_router)
+    app.include_router(export_router)
     app.include_router(search_router)
     app.include_router(sentinel_router)
 

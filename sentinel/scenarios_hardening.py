@@ -36,9 +36,8 @@ async def _ingest(ctx, filename: str, data: bytes) -> tuple[str, str]:
     from infra.textsource import EmbeddedTextLayer
 
     await _sign_in(ctx, "officer")
-    cases = (await ctx.client.get("/cases?limit=50")).json()
-    assert cases, "the officer can see no case at all"
-    case_id = cases[0]["id"]
+    # Resolved by relationship in sentinel/context.py, not by list position.
+    case_id = ctx.ids["primary_case"]
     async with ctx.engine.begin() as conn:
         actor = (await conn.execute(sa.text("SELECT id FROM app_user LIMIT 1"))).scalar_one()
         result = await Pipeline(

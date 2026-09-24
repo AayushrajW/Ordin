@@ -32,7 +32,7 @@ import {
   IconUpload,
   IconX,
 } from "../../components/icons";
-import { Confidence, Empty, Notice, relative, when } from "../../components/ui";
+import { Confidence, Empty, Notice, TechnicalDetails, TrustStrip, relative, when } from "../../components/ui";
 import {
   currentSubject,
   get,
@@ -56,6 +56,13 @@ const ERRORS: Record<string, string> = {
   rate: "Too many requests in a short time. Wait a moment and try again.",
   nothinglocated:
     "Nothing identifying could be located on the page, so no derivative was made. A copy that removed nothing must never be handed on as redacted.",
+  alreadyopen: "You can already open this case, so there is nothing to declare.",
+  // A disposal refused for these two reasons used to report "alreadyopen".
+  alreadydisposed: "This version was already disposed. Nothing was changed.",
+  confirm: "The confirmation did not match the version. Nothing was destroyed.",
+  notanchored:
+    "This version has no anchor yet, so it cannot be disposed. Destroying bytes "
+    + "that were never attested to leaves an absence nobody can explain.",
 };
 
 const humanKey = (key: string) =>
@@ -95,6 +102,8 @@ const ACTIONS: Record<string, { label: string; icon: React.ReactNode }> = {
   document_viewed: { label: "viewed the page", icon: <IconEye className="h-3.5 w-3.5" /> },
   document_uploaded: { label: "filed the document", icon: <IconUpload className="h-3.5 w-3.5" /> },
   version_created: { label: "produced a redacted derivative", icon: <IconRedact className="h-3.5 w-3.5" /> },
+  document_exported: { label: "exported a copy", icon: <IconEye className="h-3.5 w-3.5" /> },
+  disposal_recorded: { label: "recorded a lawful disposal", icon: <IconLock className="h-3.5 w-3.5" /> },
 };
 
 const INTEGRITY: Record<Integrity["state"], { tone: string; icon: React.ReactNode; title: string }> = {
@@ -215,18 +224,52 @@ function FieldCard({
             <dd className="text-ink-700">{f.confidence === null ? "—" : "deterministic match"}</dd>
           </dl>
           {!verified ? (
-            <form method="post" action="/actions/field" className="mt-3">
-              <input type="hidden" name="intent" value="verify" />
-              <input type="hidden" name="field_id" value={f.id} />
-              <input type="hidden" name="next" value={here} />
-              <button type="submit" className={warnings.length ? "btn-quiet w-full border-caution-100 text-caution-700" : "btn-primary w-full"}>
-                <IconCheck className="h-4 w-4" />
-                {warnings.length ? "Commit as read, despite the warning" : "Commit this value"}
-              </button>
-              <p className="mt-2 text-center text-[0.6875rem] text-ink-400">
-                Writes <span className="mono">verified</span> under your name and one audit row.
+            <div className="mt-3 space-y-2">
+              <form method="post" action="/actions/field">
+                <input type="hidden" name="intent" value="verify" />
+                <input type="hidden" name="field_id" value={f.id} />
+                <input type="hidden" name="next" value={here} />
+                <button
+                  type="submit"
+                  className={`btn-primary w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold ${
+                    warnings.length ? "border-caution-500 bg-caution-600 hover:bg-caution-700" : ""
+                  }`}
+                >
+                  <IconCheck className="h-4 w-4" /> Confirm & Sign
+                </button>
+              </form>
+
+              <div className="grid grid-cols-2 gap-2">
+                <form method="post" action="/actions/field">
+                  <input type="hidden" name="intent" value="enter" />
+                  <input type="hidden" name="version_id" value={versionId} />
+                  <input type="hidden" name="field_key" value={f.field_key} />
+                  <input type="hidden" name="value" value={f.value} />
+                  <input type="hidden" name="next" value={here} />
+                  <button type="submit" className="btn-quiet w-full flex items-center justify-center gap-1.5 py-1.5 text-xs">
+                    <IconPen className="h-3.5 w-3.5" /> Edit
+                  </button>
+                </form>
+
+                <form method="post" action="/actions/field">
+                  <input type="hidden" name="intent" value="enter" />
+                  <input type="hidden" name="version_id" value={versionId} />
+                  <input type="hidden" name="field_key" value={f.field_key} />
+                  <input type="hidden" name="value" value="[DISCARDED / REJECTED]" />
+                  <input type="hidden" name="next" value={here} />
+                  <button type="submit" className="btn-quiet w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-danger-700 hover:bg-danger-50">
+                    <IconX className="h-3.5 w-3.5" /> Reject
+                  </button>
+                </form>
+              </div>
+
+              <a href={here} className="block text-center text-[0.6875rem] text-ink-500 hover:text-ink-800">
+                Save as draft (remain uncommitted)
+              </a>
+              <p className="text-center text-[0.625rem] text-ink-400">
+                Confirming appends eSign cryptographic commitment and verified audit row.
               </p>
-            </form>
+            </div>
           ) : (
             <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-verified-50 px-3 py-2 text-[0.6875rem] text-verified-700">
               <IconShield className="h-3.5 w-3.5" /> Committed by a named person. The database refuses this state without one.
@@ -311,10 +354,10 @@ export default async function DocumentPage({
   searchParams,
 }: {
   params: Promise<{ documentId: string }>;
-  searchParams: Promise<{ field?: string; error?: string; version?: string; mode?: string; uploaded?: string; redacted?: string }>;
+  searchParams: Promise<{ field?: string; error?: string; version?: string; mode?: string; uploaded?: string; redacted?: string; compare?: string; disposed?: string }>;
 }) {
   const { documentId } = await params;
-  const { field: selectedId, error, version: wantedVersion, mode: rawMode, uploaded, redacted } = await searchParams;
+  const { field: selectedId, error, version: wantedVersion, mode: rawMode, uploaded, redacted, compare: compareId, disposed } = await searchParams;
   const subject = await currentSubject();
   const document = subject ? await get<DocumentRecord>(`/documents/${documentId}`) : null;
 
@@ -334,6 +377,18 @@ export default async function DocumentPage({
   // The newest *original* by default: an officer works the real document, and the
   // derivative is something produced from it. A grantee only has derivatives.
   const versions = document.versions;
+  if (versions.length === 0) {
+    return (
+      <Shell subject={subject} returnTo={`/documents/${documentId}`} active="cases">
+        <PageHeader title="No versions" crumbs={[{ label: "Case files", href: "/" }, { label: "Unavailable" }]} />
+        <div className="mx-auto max-w-[88rem] px-6 py-8 lg:px-10">
+          <Empty title="This document has no available versions">
+            The document exists but no version is available to this identity.
+          </Empty>
+        </div>
+      </Shell>
+    );
+  }
   const version =
     versions.find((v) => v.id === wantedVersion) ??
     [...versions].reverse().find((v) => !v.is_derivative) ??
@@ -358,6 +413,14 @@ export default async function DocumentPage({
     fields[0] ??
     null;
   const spans = mode === "review" && selected ? await get<SpanBoxes>(`/fields/${selected.id}/spans`) : null;
+
+  const compare =
+    compareId && compareId !== version.id
+      ? versions.find((v) => v.id === compareId) ?? null
+      : null;
+  const compareFields = compare
+    ? await get<ExtractedField[]>(`/versions/${compare.id}/fields`).then((f) => f ?? [])
+    : [];
 
   const base = `/documents/${documentId}?version=${version.id}`;
   const here = `${base}${mode === "redact" ? "&mode=redact" : ""}${selected ? `&field=${selected.id}` : ""}`;
@@ -409,44 +472,83 @@ export default async function DocumentPage({
       href: `/documents/${documentId}?version=${v.id}`,
       label: v.is_derivative ? "Show redacted" : "Show original",
     })),
-    { phrase: "back to the case", aliases: ["back to case"], href: "/", label: "Case files" },
+    { phrase: "back to the case", aliases: ["back to case"], href: document.case_id ? `/cases/${document.case_id}` : "/", label: "Case files" },
   ];
 
   return (
     <Shell subject={subject} returnTo={here} active="cases"
            voice={{ briefing, commands: voiceCommands }}>
       <PageHeader
-        crumbs={[{ label: "Case files", href: "/" }, { label: document.title }]}
-        eyebrow={version.is_derivative ? "Redacted derivative" : "Original document"}
+        crumbs={[
+          { label: "Case files", href: "/" },
+          ...(document.case_id
+            ? [{ label: "Case", href: `/cases/${document.case_id}` }]
+            : []),
+          { label: document.title },
+        ]}
+        eyebrow={version.is_derivative ? "Evidence passport · redacted" : "Evidence passport"}
         title={document.title}
+        hindi={version.is_derivative ? "संपादित प्रति" : "मूल दस्तावेज़"}
         meta={
-          <span className="flex flex-wrap items-center gap-2">
-            {versions.map((v) => (
-              <a key={v.id} href={`/documents/${documentId}?version=${v.id}`}
-                 className={`chip transition ${v.id === version.id ? "bg-ink-900 text-white" : "bg-white text-ink-600 ring-1 ring-inset ring-paper-300 hover:ring-ink-300"}`}>
-                v{v.version_no} · {v.is_derivative ? "redacted" : "original"}
-              </a>
-            ))}
-            <span className="mono text-xs text-ink-400">sha256 {version.sha256.slice(0, 20)}…</span>
-          </span>
+          <div className="space-y-2">
+            <span className="flex flex-wrap items-center gap-2">
+              {versions.map((v) => (
+                <a key={v.id} href={`/documents/${documentId}?version=${v.id}`}
+                   className={`chip transition ${v.id === version.id ? "bg-ink-900 text-white" : "bg-white text-ink-600 ring-1 ring-inset ring-paper-300 hover:ring-ink-300"}`}>
+                  v{v.version_no} · {v.is_derivative ? "redacted" : "original"}
+                </a>
+              ))}
+            </span>
+            <TrustStrip
+              integrity={integrity?.state}
+              disclosure={document.disclosure}
+              disposed={version.lifecycle_state === "disposed"}
+            />
+          </div>
         }
         actions={
-          original && !version.is_derivative ? (
-            <nav className="flex rounded-lg bg-paper-200 p-1" aria-label="Mode">
-              <a href={`${base}`} className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${mode === "review" ? "bg-white text-ink-900 shadow-card" : "text-ink-500 hover:text-ink-800"}`}>
-                Review fields{drafts ? ` · ${drafts}` : ""}
-              </a>
-              <a href={`${base}&mode=redact`} className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${mode === "redact" ? "bg-white text-ink-900 shadow-card" : "text-ink-500 hover:text-ink-800"}`}>
-                <IconRedact className="h-3.5 w-3.5" /> Redact
-              </a>
-            </nav>
-          ) : (
-            <span className="chip-signal"><IconLock className="h-3 w-3" /> {original ? "Derivative" : "You receive the redacted derivative only"}</span>
-          )
+          <div className="flex flex-wrap items-center gap-2">
+            <a href={`/takeaway/version/${version.id}`} className="btn-quiet">
+              Export this version
+            </a>
+            {original && !version.is_derivative ? (
+              <nav className="flex rounded-lg bg-paper-200 p-1" aria-label="Mode">
+                <a href={`${base}`} className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${mode === "review" ? "bg-white text-ink-900 shadow-card" : "text-ink-500 hover:text-ink-800"}`}>
+                  Review fields{drafts ? ` · ${drafts}` : ""}
+                </a>
+                <a href={`${base}&mode=redact`} className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${mode === "redact" ? "bg-white text-ink-900 shadow-card" : "text-ink-500 hover:text-ink-800"}`}>
+                  <IconRedact className="h-3.5 w-3.5" /> Redact
+                </a>
+              </nav>
+            ) : (
+              <span className="chip-signal"><IconLock className="h-3 w-3" /> {original ? "Derivative" : "You receive the redacted derivative only"}</span>
+            )}
+          </div>
         }
       />
 
       <div className="mx-auto max-w-[96rem] px-6 py-6 lg:px-8">
+        {original && !version.is_derivative && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-brass-400/80 bg-brass-50/70 p-4 shadow-sm animate-rise">
+            <div className="flex items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brass-200 text-brass-800">
+                <IconShield className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-sm font-bold text-ink-900">
+                  AI output is a draft. Verify before commit.
+                </p>
+                <p className="text-xs text-ink-600">
+                  Extracted values, field boundaries, and anomalies are machine drafts. Confirmation requires explicit human verification and signature.
+                </p>
+              </div>
+            </div>
+            <span className="chip-brass shrink-0 text-[0.6875rem]">
+              Human Attestation Mandatory
+            </span>
+          </div>
+        )}
+
         <div className="mb-4 space-y-2">
           {error && <Notice tone="danger" title={ERRORS[error] ?? "The request was refused."} />}
           {uploaded && (
@@ -462,6 +564,12 @@ export default async function DocumentPage({
               yours to read.
             </Notice>
           )}
+          {disposed && (
+            <Notice tone="verified" title="Disposal recorded">
+              Bytes destroyed; the anchor and the reason remain. Integrity on this version
+              is DISPOSED_ANCHOR_ONLY — that is not a mismatch.
+            </Notice>
+          )}
           {integrity?.state === "MISMATCH" && (
             <Notice tone="danger" title="The stored bytes no longer match the anchored digest">
               This version may have been altered after it was filed. The page is withheld
@@ -469,6 +577,44 @@ export default async function DocumentPage({
             </Notice>
           )}
         </div>
+
+        {compare && (
+          <section className="surface mb-6 overflow-hidden">
+            <div className="border-b border-paper-200 px-5 py-3.5">
+              <h2 className="section-title">Version comparison</h2>
+              <p className="mt-1 text-xs text-ink-500">
+                v{compare.version_no} → v{version.version_no}. Hashes and field keys, not a pixel diff.
+              </p>
+            </div>
+            <dl className="grid gap-4 px-5 py-4 sm:grid-cols-2 text-sm">
+              <div>
+                <dt className="eyebrow">v{compare.version_no} digest</dt>
+                <dd className="mono mt-1 break-all text-xs text-ink-700">{compare.sha256}</dd>
+              </div>
+              <div>
+                <dt className="eyebrow">v{version.version_no} digest</dt>
+                <dd className="mono mt-1 break-all text-xs text-ink-700">{version.sha256}</dd>
+              </div>
+              <div>
+                <dt className="eyebrow">Hash</dt>
+                <dd className="mt-1 text-ink-800">{compare.sha256 === version.sha256 ? "Identical" : "Different"}</dd>
+              </div>
+              <div>
+                <dt className="eyebrow">Kind</dt>
+                <dd className="mt-1 text-ink-800">
+                  {compare.is_derivative ? "redacted" : "original"} → {version.is_derivative ? "redacted" : "original"}
+                </dd>
+              </div>
+            </dl>
+            {original && (
+              <p className="border-t border-paper-200 px-5 py-3 text-xs text-ink-500">
+                Field keys on v{version.version_no}: {fields.filter((f) => !f.superseded).length}.
+                On v{compare.version_no}: {compareFields.filter((f) => !f.superseded).length}.
+                Verification never carries forward to a new version.
+              </p>
+            )}
+          </section>
+        )}
 
         <div className="grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)] 2xl:grid-cols-[20rem_minmax(0,1fr)_18rem]">
           {/* ---- left ---------------------------------------------------------- */}
@@ -487,7 +633,10 @@ export default async function DocumentPage({
             ) : (
               <>
                 <div className="flex items-baseline justify-between px-1">
-                  <h2 className="section-title">Extracted fields</h2>
+                  <h2 className="section-title">
+                    Extracted fields
+                    <span lang="hi" className="hi ml-2 text-xs font-normal text-ink-500">निकाले गए क्षेत्र</span>
+                  </h2>
                   <span className="text-xs text-ink-400">
                     {drafts} awaiting{flagged ? <span className="text-caution-600"> · {flagged} flagged</span> : null}
                   </span>
@@ -528,7 +677,7 @@ export default async function DocumentPage({
           </section>
 
           {/* ---- centre ------------------------------------------------------- */}
-          <section className="desk min-w-0 overflow-hidden rounded-2xl p-4 shadow-lift lg:p-6">
+          <section className="desk min-w-0 overflow-hidden rounded-2xl p-4 lg:p-6">
             <div className="mb-4 flex items-center justify-between text-[0.6875rem] text-ink-300">
               <span className="flex items-center gap-2">
                 <span className={`dot ${mode === "redact" ? "bg-danger-500" : "bg-brass-400"}`} />
@@ -543,10 +692,21 @@ export default async function DocumentPage({
               <span className="flex items-center gap-1.5"><IconEye className="h-3.5 w-3.5" /> watermarked to you · view logged</span>
             </div>
             <div className="mx-auto max-w-[52rem]">
+              <p className="mb-2 text-center font-serif text-[0.65rem] uppercase tracking-[0.22em] text-brass-300/80">
+                Page · पृष्ठ {((spans?.page_no ?? 0) + 1).toString().padStart(2, "0")}
+              </p>
               <div className="relative overflow-hidden rounded-sm bg-white shadow-page">
                 {integrity?.state === "MISMATCH" ? (
                   <div className="grid aspect-[595/842] place-items-center bg-danger-50 text-danger-700">
                     <p className="flex items-center gap-2 text-sm font-semibold"><IconX className="h-5 w-5" /> Page withheld — integrity mismatch</p>
+                  </div>
+                ) : version.lifecycle_state === "disposed" ? (
+                  <div className="grid aspect-[595/842] place-items-center bg-paper-100 text-ink-500">
+                    <div className="text-center">
+                      <IconLock className="mx-auto h-8 w-8 text-ink-400" />
+                      <p className="mt-2 text-sm font-semibold">Lawfully disposed</p>
+                      <p className="mt-1 text-xs text-ink-400">Bytes destroyed; anchor and reason remain.</p>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -580,15 +740,147 @@ export default async function DocumentPage({
                   </div>
                 </div>
                 <p className="mt-3 text-xs leading-relaxed opacity-90">{integrity.detail}.</p>
-                <dl className="mt-3 space-y-1 border-t border-current/10 pt-3 text-[0.6875rem]">
-                  <div className="flex justify-between gap-2"><dt className="opacity-70">Anchor</dt>
-                    <dd className="mono">{integrity.anchor_seq ? `#${integrity.anchor_seq} · ${integrity.anchor_store}` : "not yet"}</dd></div>
+                <dl className="mt-3 space-y-1.5 border-t border-current/10 pt-3 text-[0.6875rem]">
+                  <div className="flex justify-between gap-2">
+                    <dt className="opacity-70">SHA-256</dt>
+                    <dd className="mono font-semibold">{integrity.sha256.slice(0, 16)}…</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="opacity-70">Version</dt>
+                    <dd className="font-semibold">v{version.version_no} ({version.is_derivative ? "Redacted" : "Original"})</dd>
+                  </div>
+                  {/* "Ledger anchor: TX-0000042" dressed a row number in a
+                      distributed-ledger costume. `anchor_seq` is a bigint identity
+                      column in `anchor_record` in this system's own Postgres; calling
+                      it a transaction id invites the reader to believe a second party
+                      witnessed it. Shown as what it is. */}
+                  <div className="flex justify-between gap-2">
+                    <dt className="opacity-70">Anchor row</dt>
+                    <dd className="mono font-semibold">
+                      {integrity.anchor_seq ? `#${integrity.anchor_seq}` : "Pending"}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="opacity-70">Status</dt>
+                    <dd className="font-semibold">{integrity.state === "VERIFIED" ? "Verified" : integrity.state}</dd>
+                  </div>
                   {integrity.anchored_at && (
-                    <div className="flex justify-between gap-2"><dt className="opacity-70">Anchored</dt><dd>{relative(integrity.anchored_at)}</dd></div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="opacity-70">Anchored</dt>
+                      <dd>{relative(integrity.anchored_at)}</dd>
+                    </div>
                   )}
                 </dl>
-                <p className="mt-3 text-[0.625rem] leading-snug opacity-70">{integrity.note}</p>
+                <p className="mt-2 text-[0.625rem] leading-snug opacity-70">{integrity.note}</p>
+                <p className="mono mt-2 break-all text-[0.625rem] opacity-80">{integrity.sha256}</p>
+                {/* CLAUDE.md, by name: "The local hash-chain is not a blockchain...
+                    only the Fabric adapter may use ledger or chain vocabulary." This
+                    read "anchored to the immutable ledger" two lines under
+                    {'{'}integrity.note{'}'}, which is the API saying the opposite - that the
+                    anchor store is hash-chained in the same database as the records it
+                    attests to and is not an independent attestation (AR-4). The panel
+                    contradicted itself, and the more impressive half was the false one. */}
+                <div className="mt-3 rounded bg-black/5 p-2 text-[0.625rem] leading-snug opacity-85">
+                  Document bytes are never placed on the anchor store; it holds digests,
+                  identifiers and timestamps only. The store is a hash chain in this
+                  system&rsquo;s own database, so it detects alteration after the fact —
+                  it does not prevent it, and it is not witnessed by anyone else.
+                </div>
               </div>
+            )}
+
+            <div className="surface px-4 py-4">
+              <p className="eyebrow">Evidence passport</p>
+              <dl className="mt-3 space-y-2 text-[0.75rem]">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ink-400">Version</dt>
+                  <dd className="font-semibold text-ink-800">v{version.version_no}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ink-400">Lifecycle</dt>
+                  <dd className="text-ink-800">{version.lifecycle_state}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ink-400">You receive</dt>
+                  <dd className="text-ink-800">{document.disclosure}</dd>
+                </div>
+              </dl>
+              {versions.length > 1 && (
+                <div className="mt-3 border-t border-paper-200 pt-3">
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-eyebrow text-ink-500">Lineage</p>
+                  <ol className="mt-2 space-y-1.5">
+                    {versions.map((v) => (
+                      <li key={v.id} className="flex items-center justify-between gap-2 text-xs">
+                        <a href={`/documents/${documentId}?version=${v.id}`} className={v.id === version.id ? "font-semibold text-ink-900" : "text-ink-600 hover:text-ink-900"}>
+                          v{v.version_no} · {v.is_derivative ? "redacted" : "original"}
+                        </a>
+                        {v.id !== version.id && (
+                          <a href={`${base}&compare=${v.id}`} className="text-[0.65rem] font-semibold text-brass-700 hover:underline">
+                            Compare
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+
+            {/* **Two deliberate steps, behind a closed disclosure.** This was a single
+                red button beside a dropdown. It destroys bytes irreversibly, and AR-15
+                records that two-person approval was cut — so the interface is the only
+                friction left between an officer and permanent erasure, and it had none.
+                Typing the version number is not security (the API neither sees nor
+                checks it); it is the pause, and it is the part of the design that is
+                honest about being a pause. Works with scripting off: `required` and
+                `pattern` are the browser's own. */}
+            {original && !version.is_derivative && version.lifecycle_state !== "disposed" && (
+              <details className="surface-quiet px-4 py-4">
+                <summary className="cursor-pointer text-xs font-semibold text-danger-700">
+                  Lawful disposal
+                </summary>
+                <form method="post" action="/actions/govern" className="mt-3 space-y-2">
+                  <p className="text-[0.6875rem] leading-relaxed text-ink-500">
+                    Destroys the stored bytes and the derived text of{" "}
+                    <span className="mono font-semibold">v{version.version_no}</span>, after
+                    the anchor exists. <strong>This cannot be undone.</strong> The digest,
+                    the anchor and this disposal record survive, so the version will verify
+                    as lawfully disposed rather than as missing. Unilateral in this build:
+                    there is no second officer to approve it.
+                  </p>
+                  <input type="hidden" name="intent" value="dispose" />
+                  <input type="hidden" name="version_id" value={version.id} />
+                  <input type="hidden" name="next" value={here} />
+                  <label className="block text-[0.65rem] font-semibold uppercase tracking-eyebrow text-ink-500">
+                    Basis
+                    <select name="basis" className="field mt-1 text-xs" required defaultValue="">
+                      <option value="" disabled>
+                        Choose the basis
+                      </option>
+                      <option value="erroneous_upload">Erroneous upload</option>
+                      <option value="superseded_original">Superseded original</option>
+                      <option value="court_order">Court order</option>
+                      <option value="retention_expiry">Retention expiry (configured basis only)</option>
+                    </select>
+                  </label>
+                  <label className="block text-[0.65rem] font-semibold uppercase tracking-eyebrow text-ink-500">
+                    Type <span className="mono normal-case">v{version.version_no}</span> to confirm
+                    <input
+                      type="text"
+                      name="confirm"
+                      required
+                      pattern={`v${version.version_no}`}
+                      autoComplete="off"
+                      placeholder={`v${version.version_no}`}
+                      className="field mt-1 w-28 text-xs"
+                      aria-label={`Type v${version.version_no} to confirm irreversible disposal`}
+                    />
+                  </label>
+                  <button type="submit" className="btn-danger w-full">
+                    Destroy v{version.version_no} permanently
+                  </button>
+                </form>
+              </details>
             )}
 
             <div className="surface px-4 py-4">

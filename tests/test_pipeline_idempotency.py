@@ -197,25 +197,35 @@ async def test_the_same_bytes_in_two_cases_produce_two_versions(ctx):
 
     assert first.version_id != second.version_id
 
-    # **The stored digests are NOT asserted equal**, and that is not a weaker test —
-    # it is the only honest one. ADR 0017: `sanitise` is deterministic within a clean
-    # process, and across a long-lived one its output occasionally differs by a few
-    # bytes as mupdf compacts object numbering differently. Asserting equality here
-    # made this file fail intermittently, in a different test each time, for a property
-    # the project has documented as not guaranteed.
+    # Both digests are asserted, and the history of this assertion is worth keeping.
     #
-    # What IS guaranteed, and what identity actually keys on since migration 0008, is
-    # the digest of what ARRIVED. That is asserted instead.
-    sources = (
+    # It once compared `content_sha256` only, and failed roughly one run in three, in a
+    # different test each time. That was written up as an inherent limit - mupdf
+    # compacting object numbering differently in a long-lived process - and the
+    # assertion was weakened to the *source* digest, which is what identity has keyed
+    # on since migration 0008 and which is guaranteed by construction.
+    #
+    # The diagnosis was wrong. `_fix_trailer_id` matched only one of PDF's two string
+    # syntaxes, so when mupdf wrote the trailer /ID as a literal the normalisation
+    # silently did not happen (ADR 0017, corrected). Sanitising really is deterministic
+    # now, over 48 corpus files and 60 rounds of a deliberately dirtied process, so the
+    # stronger claim is asserted again - and this is the integration-level place where
+    # that regex narrowing would show up.
+    rows = (
         await conn.execute(
             sa.text(
-                "SELECT source_sha256 FROM document_version WHERE id IN (:a, :b)"
+                "SELECT sha256, source_sha256 FROM document_version WHERE id IN (:a, :b)"
             ),
             {"a": first.version_id, "b": second.version_id},
         )
-    ).scalars().all()
-    assert len(set(sources)) == 1, (
-        f"the same uploaded bytes recorded different source digests: {sources}"
+    ).mappings().all()
+    assert len({r["source_sha256"] for r in rows}) == 1, (
+        "the same uploaded bytes recorded different source digests"
+    )
+    assert len({r["sha256"] for r in rows}) == 1, (
+        "the same uploaded bytes sanitised to different stored digests. Sanitising is "
+        "meant to be a pure function of its input; check that the trailer /ID is being "
+        "normalised in both PDF string syntaxes (infra/intake.py)"
     )
 
 

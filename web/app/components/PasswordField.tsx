@@ -37,10 +37,10 @@ export default function PasswordField({
   useEffect(() => setMounted(true), []);
 
   return (
-    <label className="block" htmlFor={id}>
-      <span className="mb-1.5 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-ink-400">
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-ink-500">
         {label}
-      </span>
+      </label>
       <span className="relative block">
         <input
           id={id}
@@ -67,8 +67,8 @@ export default function PasswordField({
         )}
       </span>
       {hint && (
-        <span className="mt-1.5 block text-[0.7rem] leading-relaxed text-ink-400">{hint}</span>
+        <span className="mt-1.5 block text-[0.7rem] leading-relaxed text-ink-500">{hint}</span>
       )}
-    </label>
+    </div>
   );
 }

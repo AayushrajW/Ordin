@@ -106,6 +106,14 @@ class AuditAction(StrEnum):
     GRANT_REVOKED = "grant_revoked"
     ASSIGNMENT_CHANGED = "assignment_changed"
     DISPOSAL_RECORDED = "disposal_recorded"
+    # An exception to a seal was declared (ADR 0029). The justification itself is in
+    # `break_glass_access`; this row carries its id, because invariant 4 fixes what
+    # may go on the chain and free text on an audit table is where a case summary
+    # eventually lands.
+    SEAL_BREAK_GLASS = "seal_break_glass"
+    # Bulk accounting for AR-17: export is a distinct verb, and a case-wide export
+    # records how many versions left and under what filter (in `export_record`).
+    CASE_EXPORTED = "case_exported"
     # Slice 5b. The human commit invariant 9 is about: the moment a person
     # takes responsibility for a machine-extracted value, and the moment a
     # person enters one by hand. Two actions, not one, because "a human agreed

@@ -7,8 +7,8 @@ import "./globals.css";
  * stack costs nothing and ships with the machine.
  */
 export const metadata: Metadata = {
-  title: "Ordin",
-  description: "Case-centric evidence intelligence",
+  title: "Ordin · Evidence registry",
+  description: "Case-centric evidence intelligence for Indian legal and investigation agencies",
 };
 
 export default function RootLayout({
@@ -16,7 +16,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50 font-sans text-slate-900 antialiased">
+      <body className="min-h-screen bg-paper font-sans text-ink-900 antialiased">
         {children}
       </body>
     </html>

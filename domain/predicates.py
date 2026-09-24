@@ -71,6 +71,17 @@ def _clearance_permits_sealed(s: Subject, c: CaseFacts, at: datetime) -> bool:
     return s.clearance_is_current(at) and s.clearance_level >= CLEARANCE_SEALED
 
 
+def _break_glass_active(s: Subject, c: CaseFacts, at: datetime) -> bool:
+    """Has this subject declared an unexpired exception to this case's seal?
+
+    Read by exactly one rule - the sealed-record deny - and by nothing else. That is
+    the whole design: break-glass subtracts an obstacle from a path the subject already
+    had, and is never itself a ground for access. A policy that used this predicate in
+    an `allow` rule would turn a written excuse into a master key.
+    """
+    return c.break_glass_active
+
+
 def _subject_is_active(s: Subject, c: CaseFacts, at: datetime) -> bool:
     return s.is_active
 
@@ -95,6 +106,7 @@ REGISTRY: dict[str, Predicate] = {
     "case_is_sealed": _case_is_sealed,
     "clearance_current": _clearance_current,
     "clearance_permits_sealed": _clearance_permits_sealed,
+    "break_glass_active": _break_glass_active,
     "subject_is_active": _subject_is_active,
     "post_is_administrative": _post_is_administrative,
 }

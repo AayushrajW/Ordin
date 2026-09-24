@@ -35,6 +35,11 @@ def policy(request: Request) -> Policy:
     return request.app.state.policy
 
 
+def break_glass_policy(request: Request) -> Policy:
+    """Who may declare an exception to a seal. A different question from reading."""
+    return request.app.state.break_glass_policy
+
+
 async def require_subject(request: Request) -> Subject:
     """Resolve the subject server-side, or refuse.
 

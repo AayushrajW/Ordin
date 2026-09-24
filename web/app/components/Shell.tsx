@@ -50,8 +50,8 @@ export function ClearancePips({ level, dark = false }: { level: number; dark?: b
 }
 
 function NavLink({
-  href, label, icon, active,
-}: { href: string; label: string; icon: React.ReactNode; active: boolean }) {
+  href, label, hindi, icon, active,
+}: { href: string; label: string; hindi: string; icon: React.ReactNode; active: boolean }) {
   return (
     <a
       href={href}
@@ -65,8 +65,39 @@ function NavLink({
       <span className={active ? "text-brass-300" : "text-ink-400 group-hover:text-ink-200"}>
         {icon}
       </span>
-      {label}
+      <span className="min-w-0 leading-tight">
+        <span className="block truncate">{label}</span>
+        <span lang="hi" className="hi block truncate text-[0.65rem] font-normal text-ink-400 group-hover:text-ink-300">
+          {hindi}
+        </span>
+      </span>
     </a>
+  );
+}
+
+function WorkspaceNav({ active, isAdmin }: { active: Nav; isAdmin: boolean }) {
+  return (
+    <>
+      <p className="px-3 pb-2 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-500">
+        Workspace
+        <span lang="hi" className="hi ml-1.5 font-normal normal-case tracking-normal text-ink-500">
+          कार्यक्षेत्र
+        </span>
+      </p>
+      <NavLink href="/" label="Case files" hindi="मामला पंजिका" icon={<IconCases />} active={active === "cases"} />
+      <NavLink href="/search" label="Search" hindi="खोज" icon={<IconSearch />} active={active === "search"} />
+      <p className="px-3 pb-2 pt-4 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-500">
+        Assurance
+        <span lang="hi" className="hi ml-1.5 font-normal normal-case tracking-normal text-ink-500">
+          आश्वासन
+        </span>
+      </p>
+      <NavLink href="/sentinel" label="Sentinel" hindi="प्रहरी" icon={<IconShield />} active={active === "sentinel"} />
+      <NavLink href="/health" label="System health" hindi="प्रणाली स्वास्थ्य" icon={<IconPulse />} active={active === "health"} />
+      {isAdmin && (
+        <NavLink href="/admin" label="Administration" hindi="प्रशासन" icon={<IconShield />} active={active === "admin"} />
+      )}
+    </>
   );
 }
 
@@ -95,51 +126,52 @@ export default async function Shell({
   const subjects = directory?.subjects ?? [];
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[15.5rem_minmax(0,1fr)]">
-      <aside className="relative flex flex-col bg-ink-900 text-ink-100 lg:sticky lg:top-0 lg:h-screen">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_60%_at_0%_0%,rgba(200,156,75,0.10),transparent_60%)]" />
+    <div className="min-h-screen md:grid md:grid-cols-[16.25rem_minmax(0,1fr)]">
+      <aside className="relative flex flex-col overflow-y-auto bg-ink-900 text-ink-100 md:sticky md:top-0 md:h-screen">
+        <div className="tricolor relative z-10" aria-hidden />
+        <div className="pointer-events-none absolute inset-0 top-[9px] bg-[radial-gradient(120%_60%_at_0%_0%,rgba(200,156,75,0.10),transparent_60%)]" />
 
-        <div className="relative flex items-center gap-3 px-5 pb-6 pt-6">
-          <Seal className="h-9 w-9 drop-shadow" />
-          <div>
-            <p className="font-serif text-[1.35rem] leading-none tracking-tight text-white">Ordin</p>
-            <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300/80">
-              Evidence registry
-            </p>
-          </div>
+        <div className="relative flex items-center justify-between gap-3 px-5 pb-5 pt-5">
+          <a href="/" className="flex items-center gap-3">
+            <Seal className="h-10 w-10" />
+            <span>
+              <span className="block font-serif text-[1.4rem] leading-none tracking-tight text-white">Ordin</span>
+              <span className="mt-1 block text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300/90">
+                Evidence registry
+              </span>
+              <span lang="hi" className="hi mt-0.5 block text-[0.7rem] text-ink-400">
+                साक्ष्य अभिलेख
+              </span>
+            </span>
+          </a>
+          <details className="md:hidden">
+            <summary className="btn-ghost-ink px-2 py-1 text-xs">Menu</summary>
+            <nav className="absolute left-3 right-3 z-20 mt-2 space-y-0.5 rounded-xl border border-ink-700 bg-ink-850 p-2" aria-label="Primary">
+              <WorkspaceNav active={active} isAdmin={Boolean(subject?.is_administrative)} />
+            </nav>
+          </details>
         </div>
 
-        <nav className="relative space-y-0.5 px-3" aria-label="Primary">
-          <p className="px-3 pb-2 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-500">
-            Workspace
-          </p>
-          <NavLink href="/" label="Case files" icon={<IconCases />} active={active === "cases"} />
-          <NavLink href="/search" label="Search" icon={<IconSearch />} active={active === "search"} />
-          <NavLink href="/sentinel" label="Sentinel" icon={<IconShield />} active={active === "sentinel"} />
-          <NavLink href="/health" label="System health" icon={<IconPulse />} active={active === "health"} />
-          {/* Shown from the post, resolved server-side. Hiding it is courtesy, not
-              control: the API answers a non-administrator with 404 either way. */}
-          {subject?.is_administrative && (
-            <NavLink href="/admin" label="Administration" icon={<IconShield />} active={active === "admin"} />
-          )}
+        <nav className="relative hidden space-y-0.5 px-3 md:block" aria-label="Primary">
+          <WorkspaceNav active={active} isAdmin={Boolean(subject?.is_administrative)} />
         </nav>
 
-        <div className="relative mt-6 px-5 lg:mt-auto">
+        <div className="relative mt-6 px-5 md:mt-auto">
           <div className="rounded-lg border border-brass-500/25 bg-brass-500/[0.07] px-3 py-2.5">
             <p className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300">
-              Specimen environment
+              Specimen · प्रतिरूप
             </p>
             <p className="mt-1 text-[0.6875rem] leading-snug text-ink-300">
-              Synthetic records only. Every page is marked and every view is watermarked
-              and audited.
+              Synthetic records only. Every page is marked. Every view is watermarked
+              and written to the audit chain.
             </p>
           </div>
         </div>
 
-        <div className="relative border-t border-ink-800 p-3 lg:mt-4">
+        <div className="relative border-t border-ink-800 p-3 md:mt-4">
           <details className="group">
             <summary className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-ink-850">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-ink-600 to-ink-800 text-xs font-semibold text-white ring-1 ring-ink-600">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink-700 text-xs font-semibold text-white ring-1 ring-brass-500/40">
                 {subject ? initials(subject.display_name) : "—"}
               </span>
               <span className="min-w-0 flex-1">
@@ -153,7 +185,7 @@ export default async function Shell({
                       <ClearancePips level={subject.clearance_level} dark />
                     </>
                   ) : (
-                    "Choose an identity"
+                    "Sign in to continue"
                   )}
                 </span>
               </span>
@@ -161,10 +193,12 @@ export default async function Shell({
             </summary>
 
             <div className="mt-2 space-y-1 rounded-xl border border-ink-700 bg-ink-850 p-2 shadow-lift">
-              <p className="px-2 pb-1 pt-1 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300">
-                Specimen switcher — not a login
-              </p>
-              {subjects.map((s) => {
+              {showSpecimen && subjects.length > 0 && (
+                <p className="px-2 pb-1 pt-1 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300">
+                  Specimen identities · development
+                </p>
+              )}
+              {showSpecimen && subjects.map((s) => {
                 const current = subject?.user_id === s.user_id;
                 return (
                   <form key={s.user_id} method="post" action="/actions/session">
@@ -201,8 +235,9 @@ export default async function Shell({
                 </form>
               )}
               <p className="px-2 pb-1 pt-1 text-[0.625rem] leading-snug text-ink-500">
-                No credential is checked. The server signs the chosen identity; every
-                decision after that is made from its token, never from the request.
+                {showSpecimen
+                  ? "Development only. The server signs the chosen identity; access is re-decided from the database, never from this menu."
+                  : "Session is a signed cookie. Access is re-decided from your post, designation and grants on every request."}
               </p>
             </div>
           </details>
@@ -210,7 +245,14 @@ export default async function Shell({
       </aside>
 
       <main className="min-w-0">
-        <div className="grain min-h-screen">{children}</div>
+        <div className="specimen-tape" role="note">
+          <span>SPECIMEN DATA: Synthetic record • Not for operational use</span>
+          <span aria-hidden className="text-caution-300">·</span>
+          <span lang="hi" className="hi font-normal normal-case tracking-normal">
+            प्रतिरूप — वास्तविक अभिलेख नहीं
+          </span>
+        </div>
+        <div className="grain min-h-[calc(100vh-2.25rem)]">{children}</div>
       </main>
 
       <VoiceAssistant
@@ -232,25 +274,26 @@ export default async function Shell({
 
 /** Page header: eyebrow, serif title, optional meta line and right-hand actions. */
 export function PageHeader({
-  eyebrow, title, meta, actions, crumbs,
+  eyebrow, title, hindi, meta, actions, crumbs,
 }: {
   eyebrow?: React.ReactNode;
   title: React.ReactNode;
+  hindi?: string;
   meta?: React.ReactNode;
   actions?: React.ReactNode;
   crumbs?: { label: string; href?: string }[];
 }) {
   return (
-    <header className="border-b border-paper-300/70 bg-paper-50/80 backdrop-blur">
+    <header className="border-b border-paper-300/80 bg-paper-50/90">
       <div className="mx-auto max-w-[88rem] px-6 py-6 lg:px-10">
         {crumbs && (
-          <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-xs text-ink-400">
+          <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-xs text-ink-500">
             {crumbs.map((c, i) => (
               <span key={i} className="flex items-center gap-1.5">
                 {c.href ? (
                   <a href={c.href} className="hover:text-ink-800">{c.label}</a>
                 ) : (
-                  <span className="text-ink-600">{c.label}</span>
+                  <span className="text-ink-700">{c.label}</span>
                 )}
                 {i < crumbs.length - 1 && <IconChevron className="h-3 w-3 text-ink-300" />}
               </span>
@@ -261,11 +304,17 @@ export function PageHeader({
           <div className="min-w-0 animate-rise">
             {eyebrow && <p className="eyebrow mb-2">{eyebrow}</p>}
             <h1 className="page-title">{title}</h1>
+            {hindi && (
+              <p lang="hi" className="hi mt-1 text-base text-ink-500">
+                {hindi}
+              </p>
+            )}
             {meta && <div className="mt-2 text-sm text-ink-500">{meta}</div>}
           </div>
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
       </div>
+      <div className="register-rule" />
     </header>
   );
 }

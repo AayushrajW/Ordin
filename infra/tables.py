@@ -82,6 +82,20 @@ party = sa.Table(
     sa.Column("display_name", sa.Text()),
 )
 
+# The declared exception to a seal (migration 0013). The `justification` column is
+# deliberately absent from this definition: the authorization surface needs to know
+# that a declaration exists and when it expires, and nothing here should be able to
+# read the words. Listing the columns is how that stays visible.
+break_glass_access = sa.Table(
+    "break_glass_access",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("case_id", sa.Uuid()),
+    sa.Column("actor_id", sa.Uuid()),
+    sa.Column("declared_at", sa.DateTime(timezone=True)),
+    sa.Column("expires_at", sa.DateTime(timezone=True)),
+)
+
 # What the SQL predicate builders receive. Keyed by name so a policy predicate can
 # ask for a table without importing this module's globals.
 AUTHZ_TABLES = {
@@ -91,4 +105,5 @@ AUTHZ_TABLES = {
     "app_user": app_user,
     "post": post,
     "party": party,
+    "break_glass_access": break_glass_access,
 }

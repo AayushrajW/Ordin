@@ -406,7 +406,7 @@ def detect(text: str, known: list[KnownValue], *, patterns: bool = True) -> list
     for value in known:
         if not value.value or not value.value.strip():
             continue
-        if value.kind is FindingKind.PHONE or (
+        if value.kind in (FindingKind.PHONE, FindingKind.AADHAAR) or (
             value.kind is FindingKind.OTHER and len(_digits(value.value)) >= 6
         ):
             found.extend(_propagate_number(text, value))

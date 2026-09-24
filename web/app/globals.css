@@ -50,7 +50,7 @@
 
   /* --- type ------------------------------------------------------------------- */
   .eyebrow {
-    @apply text-[0.6875rem] font-semibold uppercase tracking-eyebrow text-ink-400;
+    @apply text-[0.6875rem] font-semibold uppercase tracking-eyebrow text-ink-500;
   }
   .page-title {
     @apply font-serif text-[2rem] leading-tight tracking-tight text-ink-900;
@@ -116,5 +116,61 @@
   .desk {
     background:
       radial-gradient(120% 80% at 50% 0%, #1B2745 0%, #0B1222 60%, #070B16 100%);
+  }
+
+  /* Thin national-colour bar. Identification, not decoration. */
+  .tricolor {
+    height: 9px;
+    background: linear-gradient(
+      to bottom,
+      #ff9933 0 3px,
+      #ffffff 3px 6px,
+      #138808 6px 9px
+    );
+  }
+
+  .hi {
+    @apply font-sans font-normal tracking-normal;
+    font-feature-settings: "kern" 1;
+  }
+
+  .docket {
+    @apply overflow-hidden rounded-xl border border-paper-300/80 bg-white shadow-card;
+    background-image:
+      linear-gradient(90deg, #b08236 0 3px, transparent 3px),
+      repeating-linear-gradient(
+        transparent,
+        transparent 27px,
+        rgba(11, 18, 34, 0.035) 27px,
+        rgba(11, 18, 34, 0.035) 28px
+      );
+    background-origin: border-box;
+  }
+
+  .stamp {
+    @apply inline-flex items-center gap-2 rounded-sm border-2 border-danger-600/70 px-2 py-0.5
+           font-serif text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-danger-700;
+    transform: rotate(-2deg);
+  }
+
+  .specimen-tape {
+    @apply flex items-center justify-center gap-3 border-b border-caution-100 bg-caution-50
+           px-4 py-1.5 text-center text-[0.65rem] font-semibold uppercase tracking-[0.18em]
+           text-caution-700;
+  }
+
+  .register-rule {
+    @apply h-px w-full bg-gradient-to-r from-brass-400/80 via-paper-300 to-transparent;
+  }
+
+  .trust-strip {
+    @apply flex flex-wrap items-center gap-1.5;
+  }
+
+  .jump-nav {
+    @apply flex flex-wrap gap-2 text-[0.6875rem] font-semibold;
+  }
+  .jump-nav a {
+    @apply rounded-full border border-paper-300 bg-white px-3 py-1 text-ink-600 hover:border-brass-300 hover:text-ink-900;
   }
 }

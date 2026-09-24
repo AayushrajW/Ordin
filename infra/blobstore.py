@@ -45,6 +45,19 @@ class BlobStore(ABC):
     def exists(self, address: str) -> bool: ...
 
     @abstractmethod
+    def delete(self, address: str) -> bool:
+        """Destroy the stored bytes. Returns whether anything was there to destroy.
+
+        The one operation that contradicts "originals are never overwritten or
+        mutated", and it exists for exactly one caller: a recorded, lawful disposal
+        (`POST /versions/{id}/dispose`). Nothing in the pipeline may call this.
+
+        The honest claim is bounded and worth stating in the interface itself: **this
+        destroys the stored original.** Write-ahead logs, filesystem snapshots and
+        backups taken before now are out of reach of any code here (threat AR-13).
+        """
+
+    @abstractmethod
     def digest_of_stored(self, address: str) -> str | None:
         """Hash what is actually on disk right now.
 
@@ -121,6 +134,22 @@ class LocalBlobStore(BlobStore):
 
     def exists(self, address: str) -> bool:
         return self._path(address).exists()
+
+    def delete(self, address: str) -> bool:
+        """Unlink the file, if it is there.
+
+        **The caller decides whether it may.** This store is content-addressed, so one
+        file can back several versions - the same document filed into two cases, or a
+        version superseded by an identical re-upload. Deleting on behalf of one of them
+        destroys the others, and the store cannot see them to know. `dispose_version`
+        checks that no surviving version shares the address before calling this, and
+        that check belongs there because it is a question about the case record.
+        """
+        path = self._path(address)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
 
     def digest_of_stored(self, address: str) -> str | None:
         """Hash what is actually held, re-reading rather than trusting the address.

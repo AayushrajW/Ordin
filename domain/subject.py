@@ -72,6 +72,12 @@ class CaseFacts:
     grant_is_self_issued: bool = False
     grant_purpose: str | None = None
 
+    # Break-glass: an unexpired declaration by this subject on this case (ADR 0029).
+    # It is a fact about the *subject's relationship to the case*, like the other two,
+    # and it is deliberately not a ground for access - the only rule that reads it is
+    # the sealed-record deny, so it removes an obstacle and never opens a door.
+    break_glass_active: bool = False
+
 
 # Clearance levels. Ordinal rather than a flag, so "beyond ordinary clearance" for
 # sealed records is a comparison and not a second boolean to keep in sync.

@@ -28,16 +28,24 @@ async def record_decision(
     resource_id: str,
     action: str = "read",
     correlation_id: str | None = None,
-) -> None:
-    """Append one decision. Never updates, because the grant does not permit it."""
-    await conn.execute(
-        sa.text(
-            "INSERT INTO policy_decision "
-            "(subject_user_id, subject_post_id, resource_type, resource_id, action, "
-            " effect, policy_id, policy_version, rule_id, correlation_id) "
-            "VALUES (:user_id, :post_id, :rtype, :rid, :action, :effect, :policy_id, "
-            "        :policy_version, :rule_id, :correlation_id)"
-        ),
+) -> int:
+    """Append one decision and return its seq. Never updates: the grant forbids it.
+
+    The seq is returned so a record of an exceptional act can point at the decision
+    that permitted it - `break_glass_access.policy_decision_seq` is the first caller
+    that needs it. Existing callers ignore the value, which is the point: recording
+    the decision is mandatory, keeping the handle is not.
+    """
+    statement = sa.text(
+        "INSERT INTO policy_decision "
+        "(subject_user_id, subject_post_id, resource_type, resource_id, action, "
+        " effect, policy_id, policy_version, rule_id, correlation_id) "
+        "VALUES (:user_id, :post_id, :rtype, :rid, :action, :effect, :policy_id, "
+        "        :policy_version, :rule_id, :correlation_id) "
+        "RETURNING seq"
+    )
+    result = await conn.execute(
+        statement,
         {
             "user_id": subject.user_id,
             "post_id": subject.post_id,
@@ -51,3 +59,4 @@ async def record_decision(
             "correlation_id": correlation_id,
         },
     )
+    return result.scalar_one()

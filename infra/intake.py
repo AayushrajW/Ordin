@@ -342,9 +342,27 @@ def active_constructs(data: bytes) -> list[str]:
     return sorted(found)
 
 
-_TRAILER_ID = re.compile(
-    rb"/ID\s*\[\s*<[0-9A-Fa-f]*>\s*<[0-9A-Fa-f]*>\s*\]"
+# A PDF string is written in one of **two** syntaxes, and a writer chooses per value:
+# hex `<48656c6c6f>` or literal `(Hello)`. mupdf picks between them depending on the
+# bytes it is writing, so a random /ID comes out as hex most of the time and as a
+# literal when it happens to be mostly printable.
+#
+# The first version of this pattern matched hex only. When mupdf wrote the second /ID
+# element as a literal the substitution simply did not fire, the random identifier
+# survived, and the "deterministic" sanitiser produced different bytes for the same
+# input - roughly one document in thirty, with nothing in the output to say so. See
+# ADR 0017; the intermittent failure was misdiagnosed for weeks as mupdf renumbering
+# objects, which it never was.
+_PDF_STRING = (
+    rb"(?:<[0-9A-Fa-f\s]*>"                       # hex string
+    rb"|\((?:\\.|\((?:\\.|[^()\\])*\)|[^()\\])*\))"  # literal, one nesting level
 )
+_TRAILER_ID = re.compile(
+    rb"/ID\s*\[\s*" + _PDF_STRING + rb"\s*" + _PDF_STRING + rb"\s*\]", re.S
+)
+# Used only to answer "was there an /ID here that we failed to parse?". Deliberately
+# loose, because the question is about the case the strict pattern missed.
+_ANY_TRAILER_ID = re.compile(rb"/ID\s*\[", re.S)
 
 
 _NEUTRAL_ID = b"0" * 32
@@ -367,12 +385,27 @@ def _fix_trailer_id(pdf: bytes) -> bytes:
 
     `xref_set_key` on the trailer does not survive the save, so the substitution is
     made on the bytes afterwards. It is one well-defined edit to a dictionary this
-    function has just written itself, and it preserves length, so no offset moves.
+    function has just written itself. The edit can change the dictionary's length -
+    a literal `/ID` is rewritten as hex - and that is safe because the trailer sits
+    *after* the cross-reference table it describes, so no object offset moves and
+    `startxref` still points where it did.
+
+    **An /ID this cannot parse is a failure, not a no-op.** The original version
+    returned the document unchanged when the pattern missed, which meant a random
+    identifier survived and the output was silently non-deterministic. That is the
+    failure mode this whole module's docstring warns about three times: a control
+    that looks applied and does nothing. Invariant 2 - fail closed.
     """
     neutral, count = _TRAILER_ID.subn(
         b"/ID[<" + _NEUTRAL_ID + b"><" + _NEUTRAL_ID + b">]", pdf
     )
     if count == 0:
+        # The trailer is at the end and is the only place a document mupdf just wrote
+        # carries an /ID. Scoping the question there keeps an /ID inside some other
+        # dictionary from being mistaken for one we missed.
+        tail = pdf[pdf.rfind(b"trailer"):] if b"trailer" in pdf else pdf
+        if _ANY_TRAILER_ID.search(tail):
+            raise UploadRejected(RejectionCode.SANITISATION_FAILED)
         # No /ID at all: nothing to normalise, and the output is already stable.
         return pdf
     identifier = sha256_bytes(neutral)[:32].upper().encode("ascii")

@@ -51,7 +51,7 @@ class JsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key not in _RESERVED and not key.startswith("_"):
                 payload[key] = value
-        if record.exc_info:
+        if record.exc_info and record.exc_info[0] is not None:
             # The type only. A formatted traceback can carry row values, file
             # paths and connection strings into the log.
             payload["error_type"] = record.exc_info[0].__name__
