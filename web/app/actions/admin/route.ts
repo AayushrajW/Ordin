@@ -42,6 +42,12 @@ export async function POST(request: Request) {
     case "suspend":
       result = await apiPost(`/admin/users/${text(form, "user_id", 64)}/suspend`);
       break;
+    // Undoes a suspension AND clears a lockout. Before this there was no control for
+    // either: a misclicked Suspend, or an officer locked out by somebody else's eight
+    // wrong guesses, both needed a psql UPDATE to recover from.
+    case "restore":
+      result = await apiPost(`/admin/users/${text(form, "user_id", 64)}/restore`);
+      break;
 
     case "assign":
       result = await apiPost("/admin/assignments", {

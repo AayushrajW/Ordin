@@ -72,15 +72,35 @@ async def test_signup_issues_no_session(api):
     assert COOKIE_NAME not in response.cookies
 
 
-async def test_a_signed_up_account_cannot_log_in_until_it_is_activated(api):
+async def test_a_signed_up_account_can_log_in_immediately(api):
+    """This test used to assert the opposite, and asserting it kept the bug alive.
+
+    `create_account` wrote `is_active = false` and `authenticate` refuses an inactive
+    account, so signing up produced credentials that could never be used. The login
+    screen says "Account created... sign in now to check its status", and the API
+    answered with the same message it gives for a wrong password - so a new user
+    retried until the lockout locked them out of the account they had made a minute
+    earlier.
+
+    Signing in is not access. The account holds no post, so it reaches nothing; that
+    is the next test, and it is the property that actually matters.
+    """
     client, _ = api
     address = _address()
-    await client.post(
+    created = await client.post(
         "/auth/signup",
-        json={"email": address, "password": GOOD, "display_name": "Dormant"},
+        json={"email": address, "password": GOOD, "display_name": "New Person"},
     )
+    assert created.status_code == 201, created.text
+
     response = await client.post("/auth/login", json={"email": address, "password": GOOD})
-    assert response.status_code == 401, "a dormant account logged in"
+    assert response.status_code == 200, (
+        "an account could not sign in immediately after signing up, which is what the "
+        "login screen tells the user to do"
+    )
+    assert response.json()["placed"] is False, (
+        "a brand new account reported as placed, so awaiting_placement is meaningless"
+    )
 
 
 async def test_an_activated_but_unplaced_account_sees_nothing_at_all(api):
@@ -95,12 +115,8 @@ async def test_an_activated_but_unplaced_account_sees_nothing_at_all(api):
         "/auth/signup",
         json={"email": address, "password": GOOD, "display_name": "Unplaced"},
     )
-    async with engine.begin() as conn:
-        await conn.execute(
-            sa.text("UPDATE app_user SET is_active = true WHERE lower(email) = :e"),
-            {"e": address},
-        )
-
+    # No hand-activation any more: signup creates an account that can sign in, and
+    # the point of this test is that signing in still reaches nothing.
     login = await client.post("/auth/login", json={"email": address, "password": GOOD})
     assert login.status_code == 200, login.text
     assert login.json()["placed"] is False

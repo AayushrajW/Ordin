@@ -98,9 +98,27 @@ async def create_account(conn, *, email: str, password: str, display_name: str) 
     row = (
         await conn.execute(
             sa.text(
+                # **`is_active = true`, with no post.** It was false, and that made
+                # signup a dead end: `authenticate` refuses an inactive account, so the
+                # sequence every docstring in this module describes - request an
+                # account, sign in, be told you are awaiting placement - could not
+                # happen. The login page said "sign in now to check its status" and the
+                # API answered "Those credentials do not match an account", the same
+                # message as a wrong password, so a new user retried until the lockout
+                # locked them out of the account they had just created.
+                #
+                # Active is safe, and it is what the design already says: access comes
+                # from the POST, not the flag. With `post_id` NULL, `load_subject` joins
+                # `app_user` to `post` and returns None, so there is no organization, no
+                # jurisdiction, no clearance and no route through the policy. The account
+                # authenticates and sees nothing, which is the honest sequence.
+                #
+                # `is_active = false` now means exactly one thing - an administrator
+                # suspended this account - which is what makes the suspend control
+                # meaningful and the INACTIVE failure worth reporting.
                 "INSERT INTO app_user "
                 "  (id, post_id, display_name, clearance_level, is_active, email, password_hash) "
-                "VALUES (gen_random_uuid(), NULL, :n, 1, false, :e, :h) "
+                "VALUES (gen_random_uuid(), NULL, :n, 1, true, :e, :h) "
                 "RETURNING id"
             ),
             {"n": display_name.strip(), "e": address, "h": hashed},
@@ -135,6 +153,19 @@ async def authenticate(conn, *, email: str, password: str, at: datetime | None =
         return AuthResult(None, AuthFailure.NO_ACCOUNT)
 
     if row["locked_until"] is not None and row["locked_until"] > moment:
+        # **Spend the verification anyway.** ADR 0024 states the property this protects:
+        # "Argon2 verification is deliberately performed against a decoy hash when no
+        # account matches, so absence is not detectable by clock." Returning here before
+        # `verify_password` broke it from the other side - the locked path did no Argon2
+        # work at all and answered in about 3ms against 110ms for an address with no
+        # account, a 40x difference, measured.
+        #
+        # That hands back the account-enumeration oracle this module exists to remove,
+        # with a two-step recipe: send eight wrong passwords to an address, then a ninth,
+        # and time it. Both responses stay byte-identical, so the tests asserting that
+        # kept passing while the clock told the attacker everything. The result is
+        # discarded; only the time it costs matters.
+        verify_password(row["password_hash"] or _DECOY_HASH, password)
         return AuthResult(None, AuthFailure.LOCKED)
 
     if not verify_password(row["password_hash"], password):

@@ -261,6 +261,46 @@ async def suspend_account(
     return {"suspended": True}
 
 
+@router.post("/users/{user_id}/restore")
+async def restore_account(
+    user_id: str, request: Request, subject: Subject = Depends(require_admin)
+):
+    """Undo a suspension and clear a lockout. The control that did not exist.
+
+    **Suspension was irreversible through the product.** The accounts table renders a
+    Suspend button and, for a suspended account, static text. The only statement
+    anywhere that set `is_active` back to true lived inside `/users/{id}/place`, which
+    the web tier offers solely in the "awaiting placement" list - and a suspended
+    officer still holds a post, so they never appear in it. Recovery meant hand-crafting
+    a POST with the right post and clearance, or a psql UPDATE.
+
+    **It also answers the lockout.** Eight wrong passwords lock an account for fifteen
+    minutes, and the rate limiter allows thirty login attempts a minute from one
+    address - so roughly one request every two minutes holds a named officer out
+    indefinitely. `locked_until` is a column, so restarting the api does not clear it.
+    The administration screen showed a `locked` badge and offered nothing that cleared
+    it. This does, without touching the post or the clearance: restoring access is not
+    the same act as changing what somebody may reach, and conflating them is how an
+    unlock quietly becomes a promotion.
+    """
+    engine = request.app.state.engine
+    async with engine.begin() as conn:
+        updated = (
+            await conn.execute(
+                sa.text(
+                    "UPDATE app_user "
+                    "SET is_active = true, failed_attempts = 0, locked_until = NULL "
+                    "WHERE id = :u RETURNING id"
+                ),
+                {"u": user_id},
+            )
+        ).scalar_one_or_none()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no_such_account")
+    log.info("account restored", extra={"actor": subject.user_id, "user_id": user_id})
+    return {"restored": True}
+
+
 @router.post("/assignments")
 async def assign_to_case(
     body: AssignmentRequest, request: Request, subject: Subject = Depends(require_admin)

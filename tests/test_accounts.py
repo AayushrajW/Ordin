@@ -99,7 +99,15 @@ async def test_signup_creates_an_account_that_can_do_nothing(live_settings):
             "signup gave the account a post - so an organization, a jurisdiction and a "
             "place in the authorization model, chosen by the caller"
         )
-        assert row["is_active"] is False, "signup produced an account that is already live"
+        # Active, deliberately. Access comes from the POST, not from this flag - and
+        # `is_active = false` at signup made the whole sequence unreachable:
+        # `authenticate` refuses an inactive account, so a person who signed up could
+        # never sign in, and the login screen told them to. `is_active = false` now
+        # means one thing only: an administrator suspended this account.
+        assert row["is_active"] is True, (
+            "signup produced an account that cannot log in, so the awaiting-placement "
+            "sequence every docstring describes is unreachable"
+        )
     finally:
         await engine.dispose()
 
@@ -145,18 +153,78 @@ async def test_the_right_password_authenticates_an_active_account(live_settings)
         await engine.dispose()
 
 
-async def test_an_inactive_account_does_not_authenticate_even_with_the_right_password(
+async def test_a_suspended_account_does_not_authenticate_even_with_the_right_password(
     live_settings,
 ):
-    """A freshly signed-up account. Correct password, still not a login."""
+    """Suspension is what `is_active = false` means now.
+
+    This used to reach the same branch by signing up, because signup created inactive
+    accounts - which made the property look tested while the real cost of that flag
+    (nobody who signed up could ever log in) went unnoticed. Suspending explicitly
+    tests the control that actually sets it.
+    """
     engine = create_async_engine(live_settings.app_dsn)
     address = _address()
     try:
         async with engine.begin() as conn:
-            await create_account(conn, email=address, password=GOOD, display_name="Dormant")
+            user_id = await create_account(
+                conn, email=address, password=GOOD, display_name="Suspended"
+            )
+            # Signing up and signing in is the normal path, and it works.
+            assert (await authenticate(conn, email=address, password=GOOD)).ok
+
+            await conn.execute(
+                sa.text("UPDATE app_user SET is_active = false WHERE id = :i"),
+                {"i": user_id},
+            )
             result = await authenticate(conn, email=address, password=GOOD)
         assert not result.ok
         assert result.failure is AuthFailure.INACTIVE
+    finally:
+        await engine.dispose()
+
+
+async def test_a_locked_account_costs_the_same_time_as_an_unknown_one(live_settings):
+    """ADR 0024: "absence is not detectable by clock".
+
+    The lockout check returned before `verify_password`, so the locked path did no
+    Argon2 work at all - about 3ms against 110ms for an address with no account, a 40x
+    difference. Both responses are byte-identical, so every assertion about the
+    *response* still passed while the clock told an attacker which addresses exist:
+    send eight wrong passwords, then a ninth, and time it.
+
+    The bound is loose on purpose. This is a timing test on a shared machine and a
+    tight threshold would flake; 40x fails it and the real ratio is near 1.
+    """
+    import statistics
+    import time
+
+    engine = create_async_engine(live_settings.app_dsn)
+    address = _address()
+    try:
+        async with engine.begin() as conn:
+            await create_account(conn, email=address, password=GOOD, display_name="Target")
+            for _ in range(MAX_FAILED_ATTEMPTS):
+                await authenticate(conn, email=address, password="wrong-wrong-wrong")
+
+            locked, absent = [], []
+            for _ in range(5):
+                start = time.perf_counter()
+                result = await authenticate(conn, email=address, password="x")
+                locked.append(time.perf_counter() - start)
+                assert result.failure is AuthFailure.LOCKED
+
+                start = time.perf_counter()
+                await authenticate(conn, email=_address(), password="x")
+                absent.append(time.perf_counter() - start)
+
+        slow, fast = sorted(
+            (statistics.median(locked), statistics.median(absent)), reverse=True
+        )
+        assert slow / fast < 5, (
+            f"a locked account answers {slow / fast:.1f}x differently from an unknown "
+            f"one, which enumerates accounts by clock"
+        )
     finally:
         await engine.dispose()
 

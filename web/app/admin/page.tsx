@@ -224,7 +224,13 @@ export default async function AdminPage({
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  {/* Suspension used to be one-way: a suspended row rendered static
+                      text and nothing on this screen set is_active back. A misclick on
+                      a dense table with no confirmation needed a psql UPDATE to undo.
+                      The same control clears a lockout, which also had no button -
+                      eight wrong guesses by anybody held a named officer out for
+                      fifteen minutes, renewably, and the badge below just said so. */}
+                  <td className="space-y-1 px-4 py-3 text-right">
                     {a.is_active && a.user_id !== subject.user_id && (
                       <form method="post" action="/actions/admin">
                         <input type="hidden" name="action" value="suspend" />
@@ -235,7 +241,23 @@ export default async function AdminPage({
                       </form>
                     )}
                     {!a.is_active && (
-                      <span className="chip-draft">suspended</span>
+                      <form method="post" action="/actions/admin" className="space-y-1">
+                        <input type="hidden" name="action" value="restore" />
+                        <input type="hidden" name="user_id" value={a.user_id} />
+                        <span className="chip-draft">suspended</span>
+                        <button type="submit" className="btn-quiet block w-full text-xs">
+                          Restore
+                        </button>
+                      </form>
+                    )}
+                    {a.is_active && a.locked && (
+                      <form method="post" action="/actions/admin">
+                        <input type="hidden" name="action" value="restore" />
+                        <input type="hidden" name="user_id" value={a.user_id} />
+                        <button type="submit" className="btn-quiet text-xs">
+                          Clear lockout
+                        </button>
+                      </form>
                     )}
                   </td>
                 </tr>

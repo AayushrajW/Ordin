@@ -347,3 +347,149 @@ async def test_current_access_answers_who_can_see_what(api):
     body = response.json()
     assert "designations" in body and "grants" in body
     assert any(d["reference"] for d in body["designations"]), body
+
+
+# --- undoing things ---------------------------------------------------------------
+
+
+async def test_a_suspension_can_be_undone(api):
+    """Suspension used to be irreversible through the product.
+
+    The accounts table offered Suspend and, for a suspended row, static text. The only
+    statement that set `is_active` back lived inside `/users/{id}/place`, which the web
+    tier shows only in the awaiting-placement list - and a suspended officer still holds
+    a post, so they never appear in it. A misclick on a dense table with no confirmation
+    needed a psql UPDATE to undo.
+    """
+    client, _, ids = api
+    address = _address()
+    await client.post(
+        "/auth/signup", json={"email": address, "password": GOOD, "display_name": "Oops"}
+    )
+    await _sign_in_admin(client)
+    users = (await client.get("/admin/users")).json()
+    target = next(u for u in users if u["email"] == address)
+
+    assert (
+        await client.post(f"/admin/users/{target['user_id']}/suspend")
+    ).status_code == 200
+    await client.post("/auth/logout")
+    assert (
+        await client.post("/auth/login", json={"email": address, "password": GOOD})
+    ).status_code == 401, "a suspended account still logged in"
+
+    await _sign_in_admin(client)
+    restored = await client.post(f"/admin/users/{target['user_id']}/restore")
+    assert restored.status_code == 200, restored.text
+
+    await client.post("/auth/logout")
+    assert (
+        await client.post("/auth/login", json={"email": address, "password": GOOD})
+    ).status_code == 200, "restore did not make the account usable again"
+
+
+async def test_restoring_clears_a_lockout(api):
+    """The other thing that had no control.
+
+    Eight wrong passwords lock an account for fifteen minutes, and the limiter allows
+    thirty login attempts a minute from one address - so roughly one request every two
+    minutes holds a named officer out indefinitely, and `locked_until` is a column, so
+    restarting the api does not clear it. The screen showed a `locked` badge and offered
+    nothing that cleared it.
+    """
+    from infra.accounts import MAX_FAILED_ATTEMPTS
+
+    client, _, ids = api
+    address = _address()
+    await client.post(
+        "/auth/signup", json={"email": address, "password": GOOD, "display_name": "Target"}
+    )
+    for _ in range(MAX_FAILED_ATTEMPTS):
+        await client.post("/auth/login", json={"email": address, "password": "wrong-one!!"})
+
+    assert (
+        await client.post("/auth/login", json={"email": address, "password": GOOD})
+    ).status_code == 401, "the lockout did not engage, so this proves nothing"
+
+    await _sign_in_admin(client)
+    users = (await client.get("/admin/users")).json()
+    target = next(u for u in users if u["email"] == address)
+    assert target["locked"] is True, "the administration screen does not show the lockout"
+
+    assert (
+        await client.post(f"/admin/users/{target['user_id']}/restore")
+    ).status_code == 200
+
+    await client.post("/auth/logout")
+    assert (
+        await client.post("/auth/login", json={"email": address, "password": GOOD})
+    ).status_code == 200, "the lockout survived a restore"
+
+
+async def test_restoring_leaves_the_post_and_clearance_alone(api):
+    """Restoring access is not the same act as changing what somebody may reach.
+
+    Conflating them is how an unlock quietly becomes a promotion - which is what
+    reusing `/place` to reactivate would have done, since it takes a post and a
+    clearance level and always writes both.
+    """
+    client, engine, ids = api
+    address = _address()
+    await client.post(
+        "/auth/signup", json={"email": address, "password": GOOD, "display_name": "Placed"}
+    )
+    await _sign_in_admin(client)
+    posts = (await client.get("/admin/posts")).json()
+    ordinary = next(p for p in posts if not p["is_administrative"])
+    users = (await client.get("/admin/users")).json()
+    target = next(u for u in users if u["email"] == address)
+    await client.post(
+        f"/admin/users/{target['user_id']}/place",
+        json={"post_id": ordinary["post_id"], "clearance_level": 2, "is_active": True},
+    )
+
+    await client.post(f"/admin/users/{target['user_id']}/suspend")
+    await client.post(f"/admin/users/{target['user_id']}/restore")
+
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT post_id::text, clearance_level, is_active "
+                    "FROM app_user WHERE id = :i"
+                ),
+                {"i": target["user_id"]},
+            )
+        ).mappings().one()
+    assert row["post_id"] == ordinary["post_id"]
+    assert row["clearance_level"] == 2, "restore changed the clearance level"
+    assert row["is_active"] is True
+
+
+async def test_only_an_administrator_can_restore(api):
+    """A placed ordinary officer, not an unplaced account.
+
+    An unplaced account is refused with 401 by `require_subject` before administration
+    is reached at all - true, but it tests the wrong thing. The question is whether a
+    real officer, fully resolvable as a subject, can reactivate accounts. A restore that
+    any officer could call would let a suspended colleague be brought back by whoever
+    suspended them, which is the opposite of an administrative control.
+    """
+    client, engine, ids = api
+    address = _address()
+    await client.post(
+        "/auth/signup", json={"email": address, "password": GOOD, "display_name": "Ordinary"}
+    )
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "UPDATE app_user SET is_active = true, "
+                "post_id = (SELECT id FROM post WHERE NOT is_administrative LIMIT 1) "
+                "WHERE lower(email) = :e"
+            ),
+            {"e": address},
+        )
+    await client.post("/auth/login", json={"email": address, "password": GOOD})
+
+    refused = await client.post(f"/admin/users/{ids['officer']}/restore")
+    assert refused.status_code in (403, 404), refused.text
