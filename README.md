@@ -15,12 +15,18 @@ Needs [Docker](https://docs.docker.com/get-docker/), Python 3.11, and
 language packs. Node 20+ if you want the web tier.
 
 ```bash
-python tasks.py setup     # venv, dependencies, .env, fixtures
-python tasks.py doctor    # says what is still missing, and what to do about it
-python tasks.py demo      # fresh database, seed, and documents through the real pipeline
-python tasks.py admin --email you@example.org --password '<at least 12 characters>'
+python tasks.py setup     # venv, dependencies, .env with a fresh master key, fixtures
 python tasks.py up        # postgres in docker; api, worker and web natively
+python tasks.py migrate   # schema
+python tasks.py demo      # seed, and documents through the real pipeline
+python tasks.py admin     # the administrator, from the values setup wrote to .env
+python tasks.py doctor    # says what is still missing, and what to do about it
 ```
+
+Moving to a machine this has never run on: **[docs/HANDOVER.md](docs/HANDOVER.md)**.
+Clone it, do not copy the folder — `.env`, `var/` and the generated corpus are
+deliberately not carried, and copying them fails in three different ways, one of them
+silently.
 
 Then open **http://127.0.0.1:3001**.
 
@@ -50,7 +56,7 @@ exists for. If something is wrong it tells you which thing.
 ### The three things worth seeing
 
 ```bash
-python tasks.py sentinel         # 21 security scenarios, each able to go red
+python tasks.py sentinel         # 28 security scenarios, each able to go red
 python tasks.py evaluate         # OCR accuracy and latency, with its caveats
 python tasks.py verify-compose   # all four containers, inside 8 GB
 ```
@@ -79,11 +85,11 @@ something you watch pass rather than something we assert.
 | Administration | place accounts, designate officers, issue and revoke grants — decided by policy, and reading no case |
 | Search | full-text over OCR, predicate inside the query, snippets gated by disclosure class |
 | Deployment | production compose overlay, a config guard that refuses template secrets, backup and restore scripts |
-| Sentinel | 21 scenarios, rendered on a page and re-run live on every load |
+| Sentinel | 28 scenarios, rendered on a page and re-run live on every load |
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-398 tests. `python tasks.py test`.
+534 test functions across 47 files, which parametrisation expands into more cases when they run. `python tasks.py test` prints the number it actually executed, and `python tasks.py counts` computes every figure quoted here from the source rather than from memory - which is the only reason these are right, because they were wrong before.
 
 ---
 

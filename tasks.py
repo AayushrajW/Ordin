@@ -239,6 +239,70 @@ def cmd_migrate() -> int:
     return 0
 
 
+def render_env(example: str, master_key: str) -> str:
+    """Turn `.env.example` into a working `.env` for a fresh machine.
+
+    Pulled out of `cmd_setup` so it can be tested. The rest of setup creates a venv,
+    runs pip and shells out to npm, none of which a test should do — but this function
+    decides what the machine's whole configuration is, and it had no test at all.
+
+    Three groups of substitution, for three different reasons:
+
+    **Loopback dev passwords**, named `dev_*_local_only` so nobody has to guess whether
+    a value found in a running system is a real credential. They are committed in
+    `tasks.py` on purpose; the template ships `change_me_*` so a deployment that copies
+    the template by hand cannot accidentally inherit them.
+
+    **A generated master key.** The template ships `ORDIN_MASTER_KEY=` empty, which means
+    blobs are written in PLAINTEXT, and Sentinel CRYPT-01/02/03 then report red — a fresh
+    demo machine opening on three red criticals for a feature that is built and working.
+    Generated per machine rather than shipped, because a key in the repository is a
+    committed secret; and only when `.env` is being created, because overwriting one
+    orphans every blob already stored (ADR 0028: there is no recovery).
+
+    **The demo administrator**, so the sign-in hint on the login screen is true. That
+    hint is hardcoded in `web/app/login/page.tsx`; without the matching account the first
+    thing a new operator sees is a screen stating a password that does not work.
+    `ORDIN_ADMIN_ALLOW_WEAK` is required because the password is five characters and
+    `admin.py` refuses that unless the environment is a development one *and* the flag is
+    set. That awkwardness is deliberate and is left exactly as it is.
+    """
+    fill = {
+        "POSTGRES_OWNER_PASSWORD": "dev_owner_pw_local_only",
+        "ORDIN_APP_PASSWORD": "dev_app_pw_local_only",
+        "ORDIN_SESSION_SECRET": "dev_session_secret_local_only",
+        "ORDIN_MASTER_KEY": master_key,
+        "ORDIN_ADMIN_EMAIL": "admin@gmail.com",
+        "ORDIN_ADMIN_PASSWORD": "admin",
+        "ORDIN_ADMIN_ALLOW_WEAK": "1",
+    }
+
+    # **Line by line, filling only what is unset.** A `str.replace` pass is the obvious
+    # implementation and it is not idempotent: running it twice turns
+    # `ORDIN_ADMIN_PASSWORD=admin` into `ORDIN_ADMIN_PASSWORD=adminadmin`, because the
+    # key it matches on is still there after the first pass. Setup never overwrites an
+    # existing .env so nothing reaches that today, but "correct only because its one
+    # caller happens not to do the dangerous thing" is how a helper behaves right up
+    # until the second caller. A test asserts the idempotence directly.
+    #
+    # Filling only empty and `change_me_*` values also means a half-configured .env can
+    # be completed without clobbering the parts somebody set deliberately.
+    out = []
+    for line in example.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if key in fill and (value.strip() == "" or value.strip().startswith("change_me")):
+            ending = "\n" if line.endswith("\n") else ""
+            out.append(f"{key}={fill[key]}{ending}")
+        else:
+            out.append(line)
+    return "".join(out)
+
+
 def cmd_setup() -> int:
     """Everything a clean clone needs before anything else works.
 
@@ -286,17 +350,17 @@ def cmd_setup() -> int:
     if env_file.exists():
         print("  .env             : already present, left alone")
     elif example.exists():
-        body = example.read_text(encoding="utf-8")
-        # Replace the placeholders so the stack starts. These are local dev values
-        # for a database bound to loopback; .env is gitignored.
-        for placeholder, value in (
-            ("change_me_owner", "dev_owner_pw_local_only"),
-            ("change_me_app", "dev_app_pw_local_only"),
-            ("change_me_session_secret", "dev_session_secret_local_only"),
-        ):
-            body = body.replace(placeholder, value)
-        env_file.write_text(body, encoding="utf-8")
-        print("  .env             : created from .env.example with local dev values")
+        sys.path.insert(0, str(ROOT))
+        from infra.crypto import generate_master_key
+
+        env_file.write_text(
+            render_env(example.read_text(encoding="utf-8"), generate_master_key()),
+            encoding="utf-8",
+        )
+        print("  .env             : created, with a fresh master key and demo admin")
+        print("    ! the demo administrator is admin@gmail.com / admin - a five")
+        print("      character password, accepted only because ORDIN_ENV is dev.")
+        print("      Change both before this is reachable by anyone else.")
     else:
         print("  .env             : MISSING and no .env.example to copy")
         problems += 1
@@ -320,13 +384,58 @@ def cmd_setup() -> int:
         print("  fixtures         : generating")
         subprocess.run([python, "-m", "fixtures.generate"], cwd=ROOT)
 
+    # 6. An .env that predates encryption at rest. Never overwritten - only said out
+    #    loud, because the symptom otherwise is three red Sentinel scenarios with no
+    #    indication of why.
+    if env_file.exists():
+        configured = [
+            line for line in env_file.read_text(encoding="utf-8").splitlines()
+            if line.startswith("ORDIN_MASTER_KEY=") and line.strip() != "ORDIN_MASTER_KEY="
+        ]
+        if not configured:
+            print("\n  ! ORDIN_MASTER_KEY is not set, so documents are stored in PLAINTEXT.")
+            print("    Sentinel CRYPT-01/02/03 will report red, and they are right to.")
+            print("    Generate one with `python tasks.py newkey` and put it in .env.")
+            print("    Do it BEFORE `python tasks.py demo`: switching encryption on does")
+            print("    not re-encrypt blobs already written (docs/adr/0028).")
+            problems += 1
+
+    # 7. The one hard prerequisite, and it is checked by ASKING IT A QUESTION.
+    #
+    #    `shutil.which("docker")` finds the binary, which is present on any machine that
+    #    ever installed Docker Desktop - including one where the daemon is not running.
+    #    That is not a hypothetical distinction: on the machine this was written on, a
+    #    stopped daemon is the single most frequent cause of "nothing works", and a setup
+    #    that printed "complete" while postgres was unreachable would be reporting on the
+    #    installer rather than on the system.
+    if not shutil.which("docker"):
+        print("\n  ! docker is not installed or not on PATH. Postgres runs in a container")
+        print("    (`python tasks.py up`), so nothing will start without it.")
+        problems += 1
+    else:
+        probe = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True, timeout=60,
+        )
+        if probe.returncode != 0:
+            print("\n  ! docker is installed but the daemon is not responding.")
+            print("    Start Docker Desktop and wait for it to report running, then")
+            print("    re-run this. `python tasks.py up` will fail until it does.")
+            problems += 1
+
     if not shutil.which("tesseract"):
         print("\n  ! tesseract is not installed. OCR stages will fail by design rather")
         print("    than falling back to the text layer (docs/adr/0012).")
         problems += 1
 
     print(f"\n  {'setup complete' if not problems else f'{problems} thing(s) need attention'}")
-    print("  next:  python tasks.py doctor")
+    print("\n  next, in order:")
+    print("    python tasks.py up        postgres, api, worker, web")
+    print("    python tasks.py migrate   schema")
+    print("    python tasks.py demo      seed, then documents through the real pipeline")
+    print("    python tasks.py admin     an administrator you can sign in as")
+    print("    python tasks.py doctor    check it all came up")
+    print("    python tasks.py sentinel  the security claims, red or green")
     return 0
 
 

@@ -10,6 +10,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -129,11 +130,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # wrong and why, which is the whole point of a 422.
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # `jsonable_encoder`, because `ctx` is not always JSON. A field_validator that
+        # raises ValueError - `BreakGlassRequest.justification` and
+        # `DisposeRequest.basis` both do - puts the exception OBJECT in `ctx["error"]`,
+        # and serialising that raises TypeError inside the handler, turning a 422 into a
+        # 500 on exactly the routes with the most careful validation. FastAPI's own
+        # handler encodes for this reason; dropping `input` was never a reason to stop.
         scrubbed = [
             {k: v for k, v in error.items() if k not in ("input", "url")}
             for error in exc.errors()
         ]
-        return JSONResponse(status_code=422, content={"detail": scrubbed})
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(scrubbed)})
 
     app.include_router(admin_router)
     app.include_router(auth_router)
