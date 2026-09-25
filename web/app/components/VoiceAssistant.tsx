@@ -313,7 +313,7 @@ export default function VoiceAssistant({ briefing, commands }: Props) {
                     <button onClick={() => run(c.phrase)} className="text-left font-mono text-brass-300 hover:underline">
                       “{c.phrase}”
                     </button>
-                    <span className="truncate text-ink-400">{c.label}</span>
+                    <span className="truncate text-ink-300">{c.label}</span>
                   </li>
                 ))}
               </ul>
@@ -322,7 +322,7 @@ export default function VoiceAssistant({ briefing, commands }: Props) {
             <p className="border-t border-ink-800 pt-2.5 text-[0.625rem] leading-snug text-ink-500">
               It never speaks names, numbers or addresses aloud, and it cannot commit a
               value or burn a redaction — those write evidence, and a misheard word must
-              not. <span className="text-ink-400">BrowserSpeechRecognition · maturity mvp ·
+              not. <span className="text-ink-300">BrowserSpeechRecognition · maturity mvp ·
               production adapter: an on-device recogniser.</span>
             </p>
           </div>

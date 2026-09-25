@@ -627,3 +627,71 @@ async def test_the_export_routes_are_rate_limited(api):
     # exhaust the page renders, or the reverse.
     window, _ = middleware._bucket(_Req("/cases/x/export"))
     assert window is middleware.exports
+
+
+# --- page count -------------------------------------------------------------------
+
+
+async def test_the_viewer_can_learn_how_many_pages_a_version_has(api):
+    """The fact the document page had no way to obtain.
+
+    The scan was rendered at the selected field's page number, defaulting to zero, with
+    no navigation - so a long document showed its first page and nothing indicated the
+    rest existed. MAX_PAGES is 200, so that is up to 199 pages of evidence present in
+    the system and unreachable through the product.
+    """
+    client, ids, _, _ = api
+    await sign_in(client, ids["officer"])
+
+    response = await client.get(f"/versions/{ids['version']}/pages")
+    assert response.status_code == 200, response.text
+    assert response.json()["page_count"] >= 1
+
+
+async def test_the_page_count_is_gated_like_the_page_itself(api):
+    """Length is a property of the document, so it follows the same disclosure rule.
+
+    A grantee who may not name the original version may not learn how long it is either
+    - otherwise the count becomes a small oracle about a document the routes deliberately
+    refuse to confirm (threat INS-08).
+    """
+    client, ids, _, _ = api
+    await sign_in(client, ids["grantee"])
+    assert (await client.get(f"/versions/{ids['version']}/pages")).status_code == 404
+
+
+async def test_a_session_is_required_for_the_page_count(api):
+    client, ids, _, _ = api
+    assert (await client.get(f"/versions/{ids['version']}/pages")).status_code == 401
+
+
+async def test_a_disposed_version_reports_no_pages_rather_than_failing(api):
+    """Zero, with a reason. A disposed document has no bytes by design, so counting
+    them is not an error condition and must not surface as one."""
+    client, ids, _, _ = api
+    await sign_in(client, ids["officer"])
+    await client.post(
+        f"/versions/{ids['version']}/dispose", json={"basis": "retention_expiry"}
+    )
+    response = await client.get(f"/versions/{ids['version']}/pages")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"page_count": 0, "reason": "disposed"}
+
+
+async def test_counting_pages_writes_no_audit_row(api):
+    """`page.png` logs document_viewed because seeing an original is itself evidence.
+    Asking how long it is shows nobody anything, and a chain row for it would be noise
+    on the one table that must stay worth reading."""
+    client, ids, engine, _ = api
+    await sign_in(client, ids["officer"])
+
+    async with engine.connect() as conn:
+        before = (
+            await conn.execute(sa.text("SELECT count(*) FROM audit_event"))
+        ).scalar_one()
+    assert (await client.get(f"/versions/{ids['version']}/pages")).status_code == 200
+    async with engine.connect() as conn:
+        after = (
+            await conn.execute(sa.text("SELECT count(*) FROM audit_event"))
+        ).scalar_one()
+    assert after == before

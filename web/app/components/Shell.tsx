@@ -62,12 +62,12 @@ function NavLink({
           : "text-ink-300 hover:bg-ink-850 hover:text-white"
       }`}
     >
-      <span className={active ? "text-brass-300" : "text-ink-400 group-hover:text-ink-200"}>
+      <span className={active ? "text-brass-300" : "text-ink-300 group-hover:text-ink-200"}>
         {icon}
       </span>
       <span className="min-w-0 leading-tight">
         <span className="block truncate">{label}</span>
-        <span lang="hi" className="hi block truncate text-[0.65rem] font-normal text-ink-400 group-hover:text-ink-300">
+        <span lang="hi" className="hi block truncate text-[0.65rem] font-normal text-ink-300 group-hover:text-ink-100">
           {hindi}
         </span>
       </span>
@@ -139,7 +139,7 @@ export default async function Shell({
               <span className="mt-1 block text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300/90">
                 Evidence registry
               </span>
-              <span lang="hi" className="hi mt-0.5 block text-[0.7rem] text-ink-400">
+              <span lang="hi" className="hi mt-0.5 block text-[0.7rem] text-ink-300">
                 साक्ष्य अभिलेख
               </span>
             </span>
@@ -178,7 +178,7 @@ export default async function Shell({
                 <span className="block truncate text-[0.8125rem] font-semibold text-white">
                   {subject?.display_name ?? "No session"}
                 </span>
-                <span className="flex items-center gap-2 text-[0.6875rem] text-ink-400">
+                <span className="flex items-center gap-2 text-[0.6875rem] text-ink-300">
                   {subject ? (
                     <>
                       <span className="truncate">{subject.title}</span>
@@ -218,7 +218,7 @@ export default async function Shell({
                         <span className="block truncate text-[0.75rem] font-medium text-white">
                           {s.display_name}
                         </span>
-                        <span className="block truncate text-[0.6875rem] text-ink-400">{s.title}</span>
+                        <span className="block truncate text-[0.6875rem] text-ink-300">{s.title}</span>
                       </span>
                       {current && <span className="dot ml-auto bg-brass-400" />}
                     </button>

@@ -32,6 +32,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from api.config import Settings  # noqa: E402
+from infra import suite_guard  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 
@@ -42,6 +43,23 @@ def uid() -> uuid.UUID:
 
 async def seed() -> int:
     settings = Settings()
+
+    # **Refuse while a test suite is using this database.** `seed()` TRUNCATEs the case
+    # tables, so running it under a live suite deletes rows that suite is mid-way
+    # through asserting on - and the failure lands in a different test each run, reading
+    # as flakiness. tests/conftest.py has refused a second *pytest* session for exactly
+    # this reason since the day the cause was found; the check lives in
+    # infra/suite_guard.py now because pytest was never the only caller. demo.py calls
+    # seed(), `python seed.py` calls seed(), and so does any one-off script somebody
+    # writes to poke the running API - which is precisely how this gap surfaced.
+    lock = suite_guard.lock_path(
+        settings.postgres_host, settings.postgres_port, settings.postgres_db
+    )
+    holder = suite_guard.held_by_another_process(lock)
+    if holder is not None:
+        print(suite_guard.refusal_message(lock, settings.postgres_db, holder))
+        return 2
+
     engine = create_async_engine(settings.owner_dsn)
 
     org_police, org_pros = uid(), uid()

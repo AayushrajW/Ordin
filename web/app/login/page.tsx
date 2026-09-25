@@ -72,7 +72,7 @@ export default async function LoginPage({
               <p className="mt-1 text-[0.625rem] font-semibold uppercase tracking-eyebrow text-brass-300/90">
                 Evidence registry
               </p>
-              <p lang="hi" className="hi mt-0.5 text-[0.8rem] text-ink-400">
+              <p lang="hi" className="hi mt-0.5 text-[0.8rem] text-ink-300">
                 साक्ष्य अभिलेख
               </p>
             </div>
@@ -102,7 +102,7 @@ export default async function LoginPage({
                   {a.icon}
                 </span>
                 <p className="mt-3 text-[0.8125rem] font-semibold text-white">{a.title}</p>
-                <p className="mt-1 text-xs leading-relaxed text-ink-400">{a.body}</p>
+                <p className="mt-1 text-xs leading-relaxed text-ink-300">{a.body}</p>
               </li>
             ))}
           </ul>

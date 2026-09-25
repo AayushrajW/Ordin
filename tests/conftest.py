@@ -8,10 +8,6 @@ from pathlib import Path
 
 import pytest
 
-# A lock older than this belonged to a run that crashed. Long enough to cover a full
-# suite (about four minutes here) several times over.
-STALE_LOCK_SECONDS = 30 * 60
-
 # The application is a layout, not an installed package - put the project root on
 # the path so `import api` works without a build step.
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from api.config import Settings  # noqa: E402
+from infra import suite_guard  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -63,14 +60,15 @@ def only_one_suite_at_a_time(settings: Settings):
     # Keyed on the database this suite will actually use, so two checkouts pointed at
     # one database collide too — which is how the sibling tree at D:\Legal Assistant
     # once shared a container with this one.
-    fingerprint = hashlib.sha256(
-        f"{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}".encode()
-    ).hexdigest()[:16]
-    lock = Path(tempfile.gettempdir()) / f"ordin-suite-{fingerprint}.lock"
-
-    if lock.exists() and time.time() - lock.stat().st_mtime > STALE_LOCK_SECONDS:
-        # A crashed run must not block the next one forever.
-        lock.unlink(missing_ok=True)
+    #
+    # The path and the staleness rule now live in `infra/suite_guard.py`, because this
+    # lock stopped being a pytest-only concern: `seed()` consults the same file, so a
+    # stray `python seed.py`, a `demo.py` run, or a script somebody wrote to poke the
+    # running API is refused too. Pytest was never the only thing that truncates.
+    lock = suite_guard.lock_path(
+        settings.postgres_host, settings.postgres_port, settings.postgres_db
+    )
+    suite_guard.clear_if_stale(lock)
 
     try:
         handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -88,9 +86,15 @@ def only_one_suite_at_a_time(settings: Settings):
 
     os.write(handle, f"pid {os.getpid()}".encode())
     os.close(handle)
+    # Mark THIS process as the holder, so the suite's own several-hundred `seed()`
+    # calls pass straight through the guard that refuses everybody else. The question
+    # the guard answers is "who holds the lock", not "is it held" - the holder is a
+    # whole pytest session that legitimately re-seeds inside itself.
+    os.environ[suite_guard.HOLDER_ENV] = str(os.getpid())
     try:
         yield
     finally:
+        os.environ.pop(suite_guard.HOLDER_ENV, None)
         lock.unlink(missing_ok=True)
 
 

@@ -67,7 +67,7 @@ async function Switcher() {
                   {p.icon}
                 </span>
                 <p className="mt-3 text-[0.8125rem] font-semibold text-white">{p.title}</p>
-                <p className="mt-1 text-xs leading-relaxed text-ink-400">{p.body}</p>
+                <p className="mt-1 text-xs leading-relaxed text-ink-300">{p.body}</p>
               </li>
             ))}
           </ul>

@@ -521,6 +521,60 @@ def _watermark(page, *, viewer: str, stamp: str) -> None:
     )
 
 
+@router.get("/versions/{version_id}/pages")
+async def version_pages(
+    version_id: str,
+    request: Request,
+    subject: Subject = Depends(require_subject),
+    policy: Policy = Depends(get_policy),
+):
+    """How many pages this version has.
+
+    The viewer needs it to offer navigation. Before this endpoint existed the page
+    number was whatever the selected field's span happened to sit on, defaulting to
+    zero - so a two-hundred page charge sheet showed page one and nothing said there
+    were a hundred and ninety-nine more. The document was in the system and unreadable
+    through the product.
+
+    **Deliberately not an audit row.** `page.png` writes `document_viewed` because
+    access to an original is itself evidence; a count of pages is not content and
+    logging it would put a row on the chain for a request that showed nobody anything.
+
+    Gated exactly as `page.png` is, through `_resolve_version`, so a caller learns the
+    length only of a version they may already render. Reads the blob rather than a
+    stored column: a page count in the database would be a second copy of a fact that
+    lives in the bytes, and the two would disagree the first time one was wrong.
+    """
+    import fitz  # PyMuPDF. Imported here so the module loads without it for unit tests.
+
+    now = datetime.now(timezone.utc)
+    async with request.app.state.engine.connect() as conn:
+        await _resolve_version(conn, policy, subject, version_id, now)
+        row = (
+            await conn.execute(
+                sa.text(
+                    "SELECT sha256, lifecycle_state FROM document_version WHERE id = :v"
+                ),
+                {"v": version_id},
+            )
+        ).mappings().one()
+        await conn.commit()
+
+    if row["lifecycle_state"] == "disposed":
+        # Lawfully destroyed, so there are no bytes to count and that is not an error.
+        return {"page_count": 0, "reason": "disposed"}
+
+    try:
+        data = _read_blob(request.app.state.blobs, row["sha256"])
+    except IntegrityMismatch:
+        raise HTTPException(status_code=409, detail="integrity_mismatch") from None
+    if data is None:
+        raise HTTPException(status_code=409, detail="bytes_unavailable")
+
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        return {"page_count": doc.page_count}
+
+
 @router.get("/versions/{version_id}/page.png")
 async def version_page(
     version_id: str,

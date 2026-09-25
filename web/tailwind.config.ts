@@ -25,7 +25,12 @@ export default {
           700: "#1E2A47",
           600: "#2C3A5C",
           500: "#4A5877",
-          400: "#7481A0",
+          // 4.5:1 on paper, paper-50, white and paper-200 - AA for body text.
+          // #7481A0 measured 3.51:1 on paper and was used 77 times, all of it
+          // text. The seven uses that sat on the dark sidebar moved to ink-300
+          // first, because darkening this would have taken THOSE from 4.80:1 to
+          // 3.36:1 - the same failure, on the other side of the page.
+          400: "#5B6887",
           300: "#A3ADC4",
           200: "#CBD2E1",
           100: "#E6EAF2",

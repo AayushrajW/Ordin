@@ -83,7 +83,23 @@ class SimulatedSubjectProvider:
             return None
 
         # Constant-time: a byte-by-byte comparison leaks the signature through timing.
-        if not hmac.compare_digest(self._sign(payload), signature):
+        #
+        # **Compared as bytes, because `compare_digest` RAISES on non-ASCII `str`.**
+        # Starlette decodes the Cookie header as latin-1, so a single byte in 0x80-0xFF
+        # arrives here as a non-ASCII string and the comparison threw TypeError -
+        # outside the try below, so it escaped `require_subject` and turned every
+        # authenticated route into a 500 for anyone who sent one. That is precisely the
+        # failure the docstring above promises cannot happen: "never raises", and "a 500
+        # would turn a probe into a denial-of-service".
+        #
+        # Encoding to bytes keeps the comparison constant-time and makes the whole input
+        # domain representable. `surrogateescape` is the errors mode that cannot itself
+        # raise on a latin-1 round trip; the signature we compute is pure hex, so a
+        # non-ASCII candidate simply fails to match, which is the correct answer.
+        if not hmac.compare_digest(
+            self._sign(payload).encode("ascii"),
+            signature.encode("utf-8", "surrogateescape"),
+        ):
             return None
 
         try:

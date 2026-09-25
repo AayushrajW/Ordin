@@ -9,7 +9,8 @@ This module is wiring only: configuration, logging, routing, health.
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -113,6 +114,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # no Tesseract, because an api that could run OCR invites somebody to call it
     # synchronously on a request. The upload route validates and versions; the worker
     # runs the thread (worker/intake_queue.py).
+
+    # **A 422 must not hand the submitted value back.** FastAPI's default validation
+    # response includes an `input` key holding the offending value verbatim, which for
+    # this application means: the plaintext password on a short-password signup, the
+    # written justification on a malformed break-glass, and the text of an extracted
+    # field on a bad manual entry. Invariant 12 forbids returning document content or
+    # credentials to a caller, and a value echoed in a response body also lands in
+    # proxy logs, browser history and a judge's network tab.
+    #
+    # Registered once, for every route, rather than per-model: the leak is a property
+    # of the default error shape, so anything added later inherits the fix instead of
+    # having to remember it. `loc`, `msg` and `type` stay - they say WHICH field was
+    # wrong and why, which is the whole point of a 422.
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        scrubbed = [
+            {k: v for k, v in error.items() if k not in ("input", "url")}
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": scrubbed})
 
     app.include_router(admin_router)
     app.include_router(auth_router)

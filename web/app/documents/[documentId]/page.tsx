@@ -314,7 +314,7 @@ function PlanPanel({ plan, versionId, here }: { plan: RedactionPlan | null; vers
           <button type="submit" disabled={regions === 0} className="btn-brass w-full">
             <IconRedact className="h-4 w-4" /> Burn {regions} regions into a new version
           </button>
-          <p className="mt-2 text-center text-[0.6875rem] leading-snug text-ink-400">
+          <p className="mt-2 text-center text-[0.6875rem] leading-snug text-ink-300">
             Content removed, page rasterised, container rebuilt. The original is untouched.
           </p>
         </form>
@@ -354,10 +354,10 @@ export default async function DocumentPage({
   searchParams,
 }: {
   params: Promise<{ documentId: string }>;
-  searchParams: Promise<{ field?: string; error?: string; version?: string; mode?: string; uploaded?: string; redacted?: string; compare?: string; disposed?: string }>;
+  searchParams: Promise<{ field?: string; error?: string; version?: string; mode?: string; uploaded?: string; redacted?: string; compare?: string; disposed?: string; page?: string }>;
 }) {
   const { documentId } = await params;
-  const { field: selectedId, error, version: wantedVersion, mode: rawMode, uploaded, redacted, compare: compareId, disposed } = await searchParams;
+  const { field: selectedId, error, version: wantedVersion, mode: rawMode, uploaded, redacted, compare: compareId, disposed, page: wantedPage } = await searchParams;
   const subject = await currentSubject();
   const document = subject ? await get<DocumentRecord>(`/documents/${documentId}`) : null;
 
@@ -422,8 +422,33 @@ export default async function DocumentPage({
     ? await get<ExtractedField[]>(`/versions/${compare.id}/fields`).then((f) => f ?? [])
     : [];
 
+  // **Page navigation.** The scan used to be rendered at `spans?.page_no ?? 0` with no
+  // way to reach any other page, so a two-hundred page charge sheet showed page one and
+  // nothing said the rest existed. The document was in the system and unreadable through
+  // the product.
+  //
+  // Selecting a field still jumps to the page its span is on - that is the useful
+  // default - but an explicit ?page wins, and the count comes from the API rather than
+  // being guessed. Clamped, because a hand-typed page number out of range would
+  // otherwise 404 the image inside an otherwise working screen.
+  const pageInfo = await get<{ page_count: number }>(`/versions/${version.id}/pages`);
+  const pageCount = Math.max(1, pageInfo?.page_count ?? 1);
+  const requested = wantedPage !== undefined ? Number(wantedPage) : null;
+  const pageNo = Math.min(
+    pageCount - 1,
+    Math.max(
+      0,
+      requested !== null && Number.isInteger(requested) ? requested : spans?.page_no ?? 0,
+    ),
+  );
+  // Boxes are drawn in the page's own coordinate space, so they belong on the page the
+  // span is on and nowhere else. Without this, paging away from a selected field painted
+  // its highlights over unrelated text.
+  const boxesOnThisPage = spans !== null && spans.page_no === pageNo;
+
   const base = `/documents/${documentId}?version=${version.id}`;
   const here = `${base}${mode === "redact" ? "&mode=redact" : ""}${selected ? `&field=${selected.id}` : ""}`;
+  const pageHref = (n: number) => `${here}&page=${n}`;
   const open = fields.filter((f) => f.status === "draft" && !f.superseded);
   const drafts = open.length;
   const flagged = open.filter((f) => f.anomalies.some((a) => a.severity === "warning")).length;
@@ -711,8 +736,8 @@ export default async function DocumentPage({
                 ) : (
                   <>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={`/scan/${version.id}?page=${spans?.page_no ?? 0}`} alt={`Page of ${document.title}`} className="block w-full" />
-                    {mode === "review" && spans?.boxes.map((b, i) => (
+                    <img src={`/scan/${version.id}?page=${pageNo}`} alt={`Page ${pageNo + 1} of ${document.title}`} className="block w-full" />
+                    {mode === "review" && boxesOnThisPage && spans?.boxes.map((b, i) => (
                       <Box key={i} b={b} w={spans.page_width} h={spans.page_height}
                            className="rounded-[2px] bg-brass-300/35 ring-2 ring-brass-400 mix-blend-multiply animate-pulse-ring" />
                     ))}
@@ -725,6 +750,45 @@ export default async function DocumentPage({
                   </>
                 )}
               </div>
+
+              {/* Page navigation. Plain links, so it works with scripting disabled like
+                  the rest of this screen, and it is hidden entirely for a one-page
+                  document rather than showing a dead control. */}
+              {integrity?.state !== "MISMATCH"
+                && version.lifecycle_state !== "disposed"
+                && pageCount > 1 && (
+                <nav
+                  aria-label="Document pages"
+                  className="flex items-center justify-between gap-3 border-t border-paper-200 px-4 py-2.5"
+                >
+                  {pageNo > 0 ? (
+                    <a href={pageHref(pageNo - 1)} className="btn-quiet text-xs" rel="prev">
+                      Previous
+                    </a>
+                  ) : (
+                    <span className="text-xs text-ink-400">Previous</span>
+                  )}
+                  <p className="text-xs text-ink-600" aria-live="polite">
+                    Page <span className="mono font-semibold text-ink-900">{pageNo + 1}</span>{" "}
+                    of <span className="mono font-semibold text-ink-900">{pageCount}</span>
+                    {boxesOnThisPage && (
+                      <span className="ml-2 text-brass-700">· selected field is here</span>
+                    )}
+                    {spans && !boxesOnThisPage && (
+                      <a href={pageHref(spans.page_no)} className="ml-2 text-brass-700 underline decoration-dotted underline-offset-2">
+                        go to selected field
+                      </a>
+                    )}
+                  </p>
+                  {pageNo < pageCount - 1 ? (
+                    <a href={pageHref(pageNo + 1)} className="btn-quiet text-xs" rel="next">
+                      Next
+                    </a>
+                  ) : (
+                    <span className="text-xs text-ink-400">Next</span>
+                  )}
+                </nav>
+              )}
             </div>
           </section>
 

@@ -152,7 +152,7 @@ export default async function SentinelPage() {
                     const ok = rows.filter((r) => r.outcome === "pass").length;
                     return (
                       <div key={family} className="rounded-lg border border-ink-700 bg-ink-900/40 px-3 py-2">
-                        <dt className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-400">
+                        <dt className="text-[0.625rem] font-semibold uppercase tracking-eyebrow text-ink-300">
                           {FAMILY[family] ?? family}
                         </dt>
                         <dd className={`num mt-1 font-display text-lg font-semibold ${ok === rows.length ? "text-brass-300" : "text-white"}`}>

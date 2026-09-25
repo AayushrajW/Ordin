@@ -84,12 +84,23 @@ export default async function CasePage({
   const { error } = await searchParams;
   const subject = await currentSubject();
   const record = subject ? await get<CaseRecord>(`/cases/${caseId}`) : null;
-  const summary = record ? await get<CaseSummary>(`/cases/${caseId}/summary`) : null;
-  const documents = record ? ((await get<DocumentRecord[]>(`/cases/${caseId}/documents`)) ?? []) : [];
-  // Null for a grantee: the endpoint needs the case, and a redacted-derivative
-  // route reaches it, so the panel simply does not render rather than showing zeros.
-  const completeness = record ? await get<Completeness>(`/cases/${caseId}/completeness`) : null;
-  const activity = record ? ((await get<Activity[]>(`/cases/${caseId}/activity`)) ?? []) : [];
+  // **The remaining four run together.** They were awaited one after another, so opening
+  // a case cost four sequential round trips to the API when none of them depends on
+  // another's result - they depend only on `record` being readable, which is already
+  // settled above. The case fetch stays first because it is the authorization gate: if
+  // it refuses, the other four must not be issued at all.
+  //
+  // `completeness` is null for a grantee: the endpoint requires disclosure ORIGINAL, and
+  // a redacted-derivative route reaches this page, so the panel does not render rather
+  // than showing zeros.
+  const [summary, documents, completeness, activity] = record
+    ? await Promise.all([
+        get<CaseSummary>(`/cases/${caseId}/summary`),
+        get<DocumentRecord[]>(`/cases/${caseId}/documents`).then((d) => d ?? []),
+        get<Completeness>(`/cases/${caseId}/completeness`),
+        get<Activity[]>(`/cases/${caseId}/activity`).then((a) => a ?? []),
+      ])
+    : [null, [], null, []];
 
   if (!record) {
     return (

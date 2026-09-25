@@ -39,7 +39,7 @@ from infra.authz import authorized_case_ids, authorized_cases, decide, load_case
 from infra.decisions import record_decision
 from infra.disclosure import Disclosure
 from infra.logging_context import current_correlation_id
-from infra.tables import case_record, party
+from infra.tables import case_assignment, case_record, party
 
 # Mirrors migration 0013's CHECK. One number, named once, so the edge and the
 # database cannot drift apart again.
@@ -163,19 +163,47 @@ async def suggest_parties(
     subject: Subject = Depends(require_subject),
     policy: Policy = Depends(get_policy),
 ) -> list[PartySuggestion]:
-    """Autocomplete, joined to the authorized case set.
+    """Autocomplete, joined to the authorized case set **and to designation**.
 
-    Invariant 1 calls this the worst offender. The join is what makes it safe;
-    querying `party` and filtering the rows afterwards is the bug.
+    Invariant 1 calls this the worst offender: "three letters must never surface a name
+    from an unauthorised case". The join is what makes it safe; querying `party` and
+    filtering the rows afterwards is the bug.
+
+    **Two joins, not one, and the second one is the point.** Joining only to
+    `authorized_case_ids` answers "may this subject reach the case", which a
+    purpose-limited grantee can - and a grantee receives the REDACTED derivative
+    precisely because they may not read the original's identifying content. Party names
+    are that content: `Ms Anjali Bhosle` is the string redaction burns out of the copy
+    they are handed. Typing two letters into a suggestion box returned it whole.
+
+    So the set is narrowed to cases this subject is *designated* on, which is what
+    `infra/disclosure.py` turns into ORIGINAL. Intersected with the policy filter rather
+    than replacing it, because designation alone is not access: a lapsed clearance or a
+    sealed record still denies, and dropping the policy join to "simplify" this would
+    hand the whole thing back.
+
+    The definition of in-force matches `infra/authz_sql._assignment_active` exactly -
+    `valid_to IS NULL` counts as in force - because two spellings of the same rule drift.
     """
     engine = request.app.state.engine
     async with engine.connect() as conn:
         allowed = authorized_case_ids(policy, subject, datetime.now(timezone.utc)).subquery()
+        designated = sa.exists(
+            sa.select(sa.literal(1)).where(
+                case_assignment.c.case_id == party.c.case_id,
+                case_assignment.c.user_id == subject.user_id,
+                case_assignment.c.valid_from <= sa.func.now(),
+                sa.or_(
+                    case_assignment.c.valid_to.is_(None),
+                    case_assignment.c.valid_to > sa.func.now(),
+                ),
+            )
+        )
         rows = (
             await conn.execute(
                 sa.select(party.c.display_name, party.c.role)
                 .join(allowed, allowed.c.id == party.c.case_id)
-                .where(party.c.display_name.ilike(f"%{q}%"))
+                .where(party.c.display_name.ilike(f"%{q}%"), designated)
                 .order_by(party.c.display_name)
                 .limit(limit)
             )

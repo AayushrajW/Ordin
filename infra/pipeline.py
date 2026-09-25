@@ -41,13 +41,38 @@ from infra.textsource import TextSource, TextSourceUnavailable
 
 
 def idempotency_key(
-    *, case_id: str, content_sha256: str, operation: str, params: dict | None = None
+    *,
+    case_id: str,
+    content_sha256: str,
+    operation: str,
+    params: dict | None = None,
+    version_id: str | None = None,
 ) -> str:
-    """docs/adr/0004. Case-scoped, so it cannot answer questions across a boundary."""
+    """docs/adr/0004. Case-scoped, so it cannot answer questions across a boundary.
+
+    **`version_id` is part of the key, and leaving it out was a real bug.** Keyed on
+    (case, content, operation) alone, two DIFFERENT versions of the same bytes in one
+    case collide - and the second one is told every stage has already succeeded. That
+    became reachable the moment disposal did: dispose a document, re-file the same file,
+    and `_upsert_version` correctly creates a new version (the disposed one is not
+    reused), which then skipped OCR, extraction, signing and **anchoring**, leaving a
+    version that could never verify as anything but PENDING. A skipped anchor is the
+    worst of the four, because the whole record rests on it.
+
+    Idempotency is unaffected, which is the test worth keeping in mind: re-running the
+    pipeline on the same upload resolves to the same version through `source_sha256`,
+    so the same version_id, so the same key. It is a genuinely new version that now does
+    its own work.
+
+    Optional, so a caller that has no version yet - or a test about case scoping - keeps
+    the old shape.
+    """
     params_hash = hashlib.sha256(
         json.dumps(params or {}, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     material = f"{case_id}|{content_sha256}|{operation}|{params_hash}"
+    if version_id is not None:
+        material = f"{material}|{version_id}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -232,7 +257,8 @@ class Pipeline:
             (JobStage.ANCHOR, self._stage_anchor),
         ):
             key = idempotency_key(
-                case_id=str(case_id), content_sha256=source_sha256, operation=stage.value
+                case_id=str(case_id), content_sha256=source_sha256, operation=stage.value,
+                version_id=str(version_id),
             )
             claimed, existing = await self._claim(conn, version_id=version_id, stage=stage.value,
                                                   key=key)

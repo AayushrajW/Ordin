@@ -134,3 +134,40 @@ def test_the_signature_covers_the_expiry_too(provider):
     revived = reseal(token, exp=int((NOW + timedelta(days=365)).timestamp()))
     assert revived != token
     assert provider.parse(revived, now=NOW + timedelta(hours=2)) is None
+
+
+def test_a_non_ascii_token_returns_none_rather_than_raising():
+    """The docstring's "never raises" promise, asserted instead of trusted.
+
+    `hmac.compare_digest` raises TypeError when either `str` argument holds a character
+    above U+007F, and that call sat outside the try block. Starlette decodes the Cookie
+    header as latin-1, so one byte in 0x80-0xFF reached it as a non-ASCII string and
+    every authenticated route answered 500 instead of 401 - reproduced over a raw socket
+    against a real server, not just in a unit test.
+
+    A malformed token is an unauthenticated request. Treating it as a fault turns a
+    probe into a denial of service and tells the prober exactly where parsing stops,
+    which is the reasoning the docstring already gives and the code did not honour.
+    """
+    provider = SimulatedSubjectProvider("secret")
+    for token in (
+        "YWJj.\u00e9\u00e9\u00e9",      # high latin-1 bytes in the signature
+        "\u00e9.\u00e9",                 # and in the payload
+        "aaa.\udce9",                    # a lone surrogate, as surrogateescape yields
+        "YWJj.\u0000",                   # a NUL
+        "\N{SNOWMAN}.\N{SNOWMAN}",       # well outside latin-1
+    ):
+        assert provider.parse(token) is None, f"{token!r} did not return None"
+
+
+def test_a_valid_token_still_round_trips_after_the_bytes_comparison():
+    """The guard above must not have been bought by breaking the normal path."""
+    provider = SimulatedSubjectProvider("secret")
+    assert provider.parse(provider.issue("user-1")) == "user-1"
+
+
+def test_a_token_signed_with_another_secret_is_refused():
+    """And the comparison still compares. Encoding to bytes could have made every
+    signature match if the two sides were encoded differently."""
+    issued = SimulatedSubjectProvider("secret-a").issue("user-1")
+    assert SimulatedSubjectProvider("secret-b").parse(issued) is None
