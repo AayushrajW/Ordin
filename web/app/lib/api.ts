@@ -94,7 +94,7 @@ export type SearchResults = {
 export type Completeness = {
   target_state: string;
   policy: string;
-  percent: number;
+  percent: number | null;
   may_proceed: boolean;
   satisfied: string[];
   shortfalls: {

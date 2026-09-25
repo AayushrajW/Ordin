@@ -58,6 +58,19 @@ class CompletenessPolicy:
     def for_state(self, state: str) -> tuple[Requirement, ...]:
         return self.requirements.get(state, ())
 
+    def knows(self, state: str) -> bool:
+        """Is there a requirement block for this state at all?
+
+        Distinct from "has no unmet requirements", and conflating the two is what let an
+        unknown state report 100% complete and clear to proceed. `configured_states`
+        below is what a caller should offer; this is what it should check.
+        """
+        return state in self.requirements
+
+    @property
+    def configured_states(self) -> tuple[str, ...]:
+        return tuple(self.requirements)
+
 
 @dataclass(frozen=True)
 class Shortfall:
@@ -86,20 +99,40 @@ class CompletenessReport:
         return tuple(s for s in self.shortfalls if s.blocking)
 
     @property
-    def may_proceed(self) -> bool:
-        """No **blocking** requirement is unmet.
+    def may_proceed(self) -> bool | None:
+        """No **blocking** requirement is unmet, or None when nothing was checked.
 
         A non-blocking shortfall is reported and does not stop anybody. The distinction
         exists because a case can legitimately have no forensic report, and a checklist
         that treated every absence as an error would be ignored within a week — which is
         the failure mode of every checklist nobody can satisfy.
+
+        None when there are no requirements for the target state at all: "nothing is
+        blocking you" and "nobody has written down what this state requires" are
+        different answers, and only one of them should ever look like a green light.
         """
+        if not self.satisfied and not self.shortfalls:
+            return None
         return not self.blocking
 
     @property
-    def percent(self) -> int:
+    def percent(self) -> int | None:
+        """How much of the checklist is met, or None when there is no checklist.
+
+        **None, not 100.** `total == 0` means one of two very different things: every
+        requirement is satisfied, or this state has no requirements configured. Returning
+        100 for both meant `?target=under_investigation` - a real, valid case state the
+        policy simply says nothing about - reported a completely empty case as 100%
+        complete and clear to proceed, and so did a typo like `?target=fied`.
+
+        That is the exact failure `load_completeness_policy` fails hard to avoid: "A
+        malformed policy must stop the process rather than quietly report every case
+        complete, which is what an empty requirement list would do." The same empty list
+        was reachable through a query parameter. Invariant 2 wants an unmatched rule to
+        deny, not to congratulate.
+        """
         total = len(self.satisfied) + len(self.shortfalls)
-        return 100 if total == 0 else round(len(self.satisfied) * 100 / total)
+        return None if total == 0 else round(len(self.satisfied) * 100 / total)
 
 
 def load_completeness_policy(path: Path | str) -> CompletenessPolicy:

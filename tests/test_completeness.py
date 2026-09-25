@@ -142,12 +142,42 @@ def test_an_absent_class_counts_as_zero_rather_than_being_skipped(policy):
     ]
 
 
-def test_a_state_with_no_requirements_is_complete_and_says_so(policy):
-    """`registered` has no checklist. Nothing is missing, and percent is not a lie."""
+def test_a_state_with_no_checklist_reports_nothing_rather_than_completeness(policy):
+    """`registered` has no requirements configured, which is not the same as meeting
+    them all — and this test used to assert that it was.
+
+    "Nothing is missing" and "nobody wrote down what this state requires" produce the
+    same empty lists and must not produce the same verdict. Reporting 100% and
+    may_proceed for the second is precisely the failure `load_completeness_policy`
+    fails hard to prevent: "A malformed policy must stop the process rather than
+    quietly report every case complete, which is what an empty requirement list would
+    do." The same empty list was reachable through the `?target=` query parameter, so
+    an empty case could be shown a full green bar.
+    """
     report = assess(policy, target_state="registered", counts={})
-    assert report.may_proceed
-    assert report.percent == 100
+    assert report.percent is None, "an unchecked state reported a completeness figure"
+    assert report.may_proceed is None, "an unchecked state reported a green light"
     assert report.shortfalls == ()
+    assert not policy.knows("registered")
+
+
+def test_a_state_with_a_checklist_that_is_fully_met_is_complete(policy):
+    """The other side, so the change above did not just make everything None."""
+    report = assess(
+        policy,
+        target_state="filed",
+        counts={"fir": 1, "statement": 1, "forensic_report": 1, "charge_sheet": 1},
+    )
+    assert report.percent == 100
+    assert report.may_proceed is True
+    assert report.shortfalls == ()
+
+
+def test_the_policy_can_say_which_states_it_knows(policy):
+    """What a caller should offer, rather than accepting any string and guessing."""
+    assert policy.knows("filed")
+    assert not policy.knows("typo")
+    assert set(policy.configured_states) == {"filed", "in_trial"}
 
 
 def test_more_than_the_minimum_is_still_satisfied(policy):

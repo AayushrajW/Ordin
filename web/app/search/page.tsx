@@ -77,8 +77,16 @@ export default async function SearchPage({
       returnTo={term ? `/search?q=${encodeURIComponent(term)}` : "/search"}
       active="search"
       voice={{
+        // **The term is not spoken.** VoiceAssistant's rule 1 is absolute - "It never
+        // speaks an identifying value... Counts, field names, flags and states only.
+        // The same reasoning as invariant 12: the screen may show it to the person
+        // entitled to see it; the air may not" - and the panel repeats that promise to
+        // the user. api/search.py says of this exact string: "The query itself can be a
+        // victim's name, and invariant 12 keeps it out of the log." Speaking it aloud at
+        // a shared desk is worse than logging it. It is on screen and in the URL
+        // already; the count is what the briefing is for.
         briefing: term
-          ? `Search for ${term}. ${results?.cases.length ?? 0} cases and ` +
+          ? `Search results. ${results?.cases.length ?? 0} cases and ` +
             `${results?.documents.length ?? 0} documents within your reach.` +
             (results?.content_withheld
               ? " Some cases you can reach hold only redacted derivatives, which carry no text to search."

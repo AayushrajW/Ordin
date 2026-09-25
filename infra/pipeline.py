@@ -419,6 +419,17 @@ class Pipeline:
                 {"k": doc_class, "i": document_id},
             )
 
+        # **Lock the document row before allocating.** `MAX(version_no) + 1` read
+        # without a lock lets two writers in separate processes - an upload and a
+        # redaction, or two uploads of the same filename - both read 2 and both
+        # insert 3. `uq_document_version_no` correctly refuses the second, so the
+        # record stays sound, but the loser gets an unhandled IntegrityError: a 500
+        # with no enumerated detail, on the upload path, which is the first screen
+        # of the demo. FOR UPDATE serialises the allocation per document.
+        await conn.execute(
+            sa.text("SELECT id FROM document WHERE id = :d FOR UPDATE"),
+            {"d": document_id},
+        )
         next_no = (
             await conn.execute(
                 sa.text(

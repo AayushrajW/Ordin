@@ -570,8 +570,12 @@ class ShortfallOut(BaseModel):
 class CompletenessOut(BaseModel):
     target_state: str
     policy: str
-    percent: int
-    may_proceed: bool
+    # Optional because 'no checklist exists for this state' is not 100% and not
+    # 'clear to proceed'. The route refuses that case outright, so these should
+    # never be null in practice - the types say so anyway, because a schema that
+    # cannot express 'unknown' is what made 100% the default answer.
+    percent: int | None
+    may_proceed: bool | None
     satisfied: list[str]
     shortfalls: list[ShortfallOut]
     # Always empty in this build, and the field exists so the absence is visible rather
@@ -621,7 +625,30 @@ async def case_completeness(
 
     # Default to the next state a case would plausibly be checked against.
     target_state = target or CaseState.FILED.value
-    report = assess(request.app.state.completeness, target_state=target_state, counts=counts)
+
+    # **An unknown target is refused, not answered with 100%.** `target` used to be an
+    # unvalidated free string handed straight to `assess()`, and `for_state` returns an
+    # empty tuple for anything it does not recognise - so zero satisfied, zero
+    # shortfalls, `percent` 100 and `may_proceed` true. `?target=fied` reported an empty
+    # case as complete and clear to proceed, and so did `?target=under_investigation`,
+    # which is a real case state the policy simply says nothing about.
+    #
+    # Two checks, because they are two different wrongnesses: a value that is not a case
+    # state at all is a bad request, and a real state with no configured checklist is a
+    # question this policy cannot answer. Neither is a green light. `percent` and
+    # `may_proceed` are now None rather than 100/true for the second, so a caller that
+    # ignores this still cannot render a full green bar.
+    if target_state not in {s.value for s in CaseState}:
+        raise HTTPException(status_code=400, detail="unknown_target_state")
+
+    completeness_policy = request.app.state.completeness
+    if not completeness_policy.knows(target_state):
+        raise HTTPException(
+            status_code=400,
+            detail=f"no_checklist_for:{target_state}",
+        )
+
+    report = assess(completeness_policy, target_state=target_state, counts=counts)
 
     return CompletenessOut(
         target_state=target_state,

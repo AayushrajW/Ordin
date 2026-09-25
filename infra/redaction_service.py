@@ -237,6 +237,12 @@ async def create_redacted_version(
     result = redact(source, regions)
     derivative_sha = blobs.put(result.pdf_bytes)
 
+    # Same lock as `Pipeline._upsert_version`, and this is the other half of the pair
+    # that collides: the API redacts while the worker ingests, in two processes.
+    await conn.execute(
+        sa.text("SELECT id FROM document WHERE id = :d FOR UPDATE"),
+        {"d": parent["document_id"]},
+    )
     next_no = (
         await conn.execute(
             sa.text(

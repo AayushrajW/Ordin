@@ -171,8 +171,12 @@ export default async function CasePage({
     `Case ${record.reference.replace(/[/-]/g, " ")}. Stage: ${stateLabel(record.state)}. ` +
     (summary?.route === "designation"
       ? "You are designated on this case and receive original documents. "
-      : `You hold a purpose-limited grant${summary?.purpose ? ` for ${summary.purpose}` : ""}, ` +
-        "and receive redacted derivatives only. ") +
+      // The purpose is NOT spoken. api/admin.py says of this column: "The purpose is a
+      // free-text string a person typed. It is not logged: invariant 12 restricts logs
+      // to ids and decisions, and a purpose can name a person." It is rendered on the
+      // access panel, where the person entitled to read it can read it.
+      : "You hold a purpose-limited grant on this case and receive redacted "
+        + "derivatives only. ") +
     `${documents.length} ${documents.length === 1 ? "document" : "documents"}` +
     (summary?.drafts_awaiting ? `, ${summary.drafts_awaiting} fields awaiting a human.` : ".") +
     (record.access_class === "sealed" ? " This case is sealed." : "");
@@ -195,7 +199,7 @@ export default async function CasePage({
   // number simply looked like a plausible count. The API reports the drafts still
   // awaiting a human, and that is the only number here that is measured.
   const activeGrants = summary?.route === "grant" ? 1 : 0;
-  const compPercent = completeness?.percent ?? 0;
+  const compPercent = completeness?.percent;
 
   return (
     <Shell
@@ -263,7 +267,7 @@ export default async function CasePage({
             </div>
             <div className="p-3.5">
               <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-ink-600">Completeness</p>
-              <p className="mt-1 font-mono text-xl font-bold text-ink-900">{compPercent}%</p>
+              <p className="mt-1 font-mono text-xl font-bold text-ink-900">{compPercent === null || compPercent === undefined ? "—" : `${compPercent}%`}</p>
               <span className="text-[0.6875rem] text-ink-400">Filing benchmark</span>
             </div>
             <div className="p-3.5">
@@ -294,7 +298,7 @@ export default async function CasePage({
             />
             <Stat
               label="Completeness"
-              value={completeness ? `${completeness.percent}%` : "—"}
+              value={completeness && completeness.percent !== null ? `${completeness.percent}%` : "—"}
               tone={completeness?.may_proceed ? "verified" : "caution"}
               hint={completeness ? `Expected before ${stateLabel(completeness.target_state)}` : "Original readers only"}
             />
@@ -564,8 +568,8 @@ export default async function CasePage({
               <div className="flex items-center gap-2 border-b border-paper-200 px-5 py-3.5">
                 <IconChecklist className="h-4 w-4 text-brass-500" />
                 <h2 className="section-title">
-                  Statutory checklist & completeness
-                  <span lang="hi" className="hi ml-2 text-xs font-normal text-ink-500">वैधानिक जाँच सूची</span>
+                  Case file checklist
+                  <span lang="hi" className="hi ml-2 text-xs font-normal text-ink-500">मामला फ़ाइल जाँच सूची</span>
                 </h2>
               </div>
               <div className="px-5 py-4">
@@ -596,7 +600,7 @@ export default async function CasePage({
 
                 <div className="flex items-baseline justify-between">
                   <span className="text-2xl font-bold tabular-nums text-ink-900">
-                    {completeness.percent}%
+                    {completeness.percent === null ? "—" : `${completeness.percent}%`}
                   </span>
                   <span className="text-xs text-ink-500">
                     expected before <strong>{stateLabel(completeness.target_state)}</strong>
@@ -605,7 +609,7 @@ export default async function CasePage({
                 <div
                   className="mt-2 h-2 w-full overflow-hidden rounded-full bg-paper-300"
                   role="progressbar"
-                  aria-valuenow={completeness.percent}
+                  aria-valuenow={completeness.percent ?? 0}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-label="Case file completeness"
@@ -614,7 +618,7 @@ export default async function CasePage({
                     className={`h-full rounded-full transition-all ${
                       completeness.may_proceed ? "bg-verified-500" : "bg-caution-500"
                     }`}
-                    style={{ width: `${completeness.percent}%` }}
+                    style={{ width: `${completeness.percent ?? 0}%` }}
                   />
                 </div>
 
@@ -626,34 +630,53 @@ export default async function CasePage({
                       : "bg-caution-50 border-caution-200 text-caution-800"
                   }`}
                 >
-                  <p className="font-semibold flex items-center gap-1.5">
+                  {/* **What was counted, not whether to file.** This read "Ready for
+                      charge-sheet submission" / "Not ready ... before judicial filing"
+                      under a heading calling the checklist statutory. Every layer
+                      beneath says the opposite: the policy file's own header says "the
+                      requirements below are procedural configuration, not law";
+                      domain/completeness.py says "It reports; it does not decide...
+                      'this case is ready to file' is a judgement with consequences.
+                      The engine produces the first. A person makes the second."; and
+                      the route docstring repeats it. Nothing in this build has a
+                      statutory citation for any of the four requirements.
+
+                      A comment a few lines above records that a fabricated statutory
+                      deadline was already removed from this same card. The statutory
+                      framing around it survived that pass. */}
+                  <p className="flex items-center gap-1.5 font-semibold">
                     {completeness.may_proceed ? (
                       <>
                         <IconCheck className="h-4 w-4 text-verified-600" />
-                        Ready for charge-sheet submission
+                        {completeness.satisfied.length} of{" "}
+                        {completeness.satisfied.length + completeness.shortfalls.length}{" "}
+                        expected items present
                       </>
                     ) : (
                       <>
-                        <IconAlert className="h-4 w-4 text-caution-600 shrink-0" />
-                        Not ready for charge-sheet submission
+                        <IconAlert className="h-4 w-4 shrink-0 text-caution-600" />
+                        {completeness.shortfalls.filter((s) => s.blocking).length} expected
+                        item
+                        {completeness.shortfalls.filter((s) => s.blocking).length === 1
+                          ? ""
+                          : "s"}{" "}
+                        not present
                       </>
                     )}
                   </p>
-                  {!completeness.may_proceed && (
-                    <p className="mt-1 text-[0.6875rem] text-caution-700 leading-snug">
-                      Blocking procedural shortfalls remain before judicial filing.
-                    </p>
-                  )}
+                  <p className="mt-1 text-[0.6875rem] leading-snug text-ink-600">
+                    {completeness.note}
+                  </p>
                 </div>
 
                 <p className="mt-4 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-500">
-                  Statutory item audit · मदवार स्थिति
+                  Item status · मदवार स्थिति
                 </p>
                 <ul className="mt-2 space-y-2">
                   {completeness.satisfied.map((label) => (
                     <li key={label} className="flex items-center gap-2 text-xs text-verified-800 bg-verified-50/50 px-2.5 py-1.5 rounded-md border border-verified-200/60">
                       <IconCheck className="h-3.5 w-3.5 shrink-0 text-verified-600" />
-                      <span className="font-medium">[PASS] {label}</span>
+                      <span className="font-medium">{label}</span>
                     </li>
                   ))}
                   {completeness.shortfalls.map((s) => (
@@ -668,7 +691,7 @@ export default async function CasePage({
                       <IconAlert className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-medium">
-                          {s.blocking ? "[BLOCK] " : "[WARN] "}
+                          {s.blocking ? "Expected: " : "Optional: "}
                           {s.label} missing
                         </span>
                         <span className="block text-[0.6875rem] text-ink-500">
