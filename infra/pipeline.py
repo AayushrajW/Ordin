@@ -39,6 +39,17 @@ from infra.esign import SimulatedESignProvider
 from infra.intake import sanitise
 from infra.textsource import TextSource, TextSourceUnavailable
 
+# How many times a stage may fail before the pipeline stops offering it.
+#
+# Bounded because the worker's ready set is ordered oldest-first and takes one row per
+# tick: a document that fails on every attempt held the only slot and starved every
+# upload behind it, indefinitely, while the heartbeat stayed green. Five attempts over
+# five ten-second ticks is long enough to ride out a transient (a lock, a brief anchor
+# outage) and short enough that a genuinely broken document stops blocking the queue
+# within a minute. `worker/intake_queue.py` reads the same constant to exclude
+# exhausted versions from the ready set - one number, two places, no drift.
+MAX_STAGE_ATTEMPTS = 5
+
 
 def idempotency_key(
     *,
@@ -112,12 +123,27 @@ class Pipeline:
 
     # --- job bookkeeping ------------------------------------------------------
 
-    async def _claim(self, conn, *, version_id, stage: str, key: str) -> tuple[bool, str | None]:
-        """Claim a stage, or report that it already ran.
+    async def _claim(
+        self, conn, *, version_id, stage: str, key: str
+    ) -> tuple[bool, str | None, bool]:
+        """Claim a stage, or report that it already ran, or that it is exhausted.
 
         ON CONFLICT DO NOTHING on the unique key is what makes a concurrent second
         worker lose the race cleanly instead of duplicating the work. Returns
-        (claimed, existing_output_ref).
+        (claimed, existing_output_ref, exhausted).
+
+        **The third value exists because retrying for ever is not resilience.** A stage
+        that fails on every attempt - a blob whose envelope will not open, a raster
+        PyMuPDF crashes on - was retried without a cap, and because the ready set was
+        ordered oldest-first with one row per tick, that one document occupied the only
+        slot and nothing behind it was ever processed. The worker logged a healthy
+        heartbeat throughout and the API kept answering 202 queued, so nothing said the
+        pipeline had stopped.
+
+        `attempts` is compared rather than a new status value, so no migration and no
+        second source of truth: a job is exhausted when it has failed MAX_STAGE_ATTEMPTS
+        times, and that is visible in the column the reliability invariant already
+        requires.
         """
         inserted = (
             await conn.execute(
@@ -131,18 +157,23 @@ class Pipeline:
             )
         ).scalar_one_or_none()
         if inserted is not None:
-            return True, None
+            return True, None, False
 
         existing = (
             await conn.execute(
                 sa.text(
-                    "SELECT status, output_ref FROM processing_job WHERE idempotency_key = :key"
+                    "SELECT status, output_ref, attempts FROM processing_job "
+                    "WHERE idempotency_key = :key"
                 ),
                 {"key": key},
             )
         ).mappings().one()
         if existing["status"] == JobStatus.SUCCEEDED:
-            return False, existing["output_ref"]
+            return False, existing["output_ref"], False
+        if existing["attempts"] >= MAX_STAGE_ATTEMPTS:
+            # Out of attempts. Not claimed, and deliberately NOT reported as skipped:
+            # a stage that never ran is not a stage that succeeded.
+            return False, None, True
         # A previous attempt failed or died mid-flight. Retry it, counting the attempt
         # - "retry count" is one of the things the reliability invariant requires.
         await conn.execute(
@@ -152,7 +183,7 @@ class Pipeline:
             ),
             {"key": key},
         )
-        return True, None
+        return True, None, False
 
     async def _finish(self, conn, key: str, *, status: str, output_ref: str | None = None,
                       error_code: str | None = None, provider: str | None = None,
@@ -260,8 +291,17 @@ class Pipeline:
                 case_id=str(case_id), content_sha256=source_sha256, operation=stage.value,
                 version_id=str(version_id),
             )
-            claimed, existing = await self._claim(conn, version_id=version_id, stage=stage.value,
-                                                  key=key)
+            claimed, existing, exhausted = await self._claim(
+                conn, version_id=version_id, stage=stage.value, key=key
+            )
+            if exhausted:
+                # Give up loudly. Reporting this as skipped-and-succeeded is what let a
+                # permanently failing document look processed while producing nothing.
+                result.stages.append(
+                    StageOutcome(stage.value, JobStatus.FAILED,
+                                 error_code="attempts_exhausted")
+                )
+                break
             if not claimed:
                 result.stages.append(
                     StageOutcome(stage.value, JobStatus.SUCCEEDED, skipped=True,

@@ -34,6 +34,11 @@ import sqlalchemy as sa
 
 GENESIS_HASH = "0" * 64
 
+# One arbitrary, stable key identifying "the anchor chain" to Postgres. Distinct from
+# `infra/audit_log._CHAIN_LOCK_KEY`: the two chains are independent, and sharing a key
+# would make every audit append wait behind every anchor for no reason.
+_ANCHOR_CHAIN_LOCK_KEY = 8_713_302
+
 
 @dataclass(frozen=True)
 class AnchorRow:
@@ -103,6 +108,28 @@ class LocalAnchorStore:
         (reliability invariant), and the UNIQUE constraint on version_id is what
         actually enforces it.
         """
+        # **Serialise appenders, for the reason `infra/audit_log.py` already gives.**
+        #
+        # Appending means reading the current head and committing to it. Two appenders
+        # that both read head N both write `prev_row_hash = N`, and `verify_chain` walks
+        # by seq and fails at the second one - reporting the anchor store as broken, for
+        # ever, with no repair path: the rows are append-only and ordin_app holds no
+        # UPDATE or DELETE on them.
+        #
+        # That is a false accusation of tampering against an untouched store, on the one
+        # mechanism this product is pitched on. The audit chain was given
+        # `pg_advisory_xact_lock` for exactly this and its comment says "nothing else in
+        # the build takes an advisory lock" - which was true, and was the bug. A separate
+        # key, because the two chains are independent and serialising them against each
+        # other would be a needless contention point.
+        #
+        # It does not take two workers. `create_redacted_version` anchors a derivative
+        # from the API process while the worker anchors an upload: two processes, no
+        # in-process serialisation to fall back on.
+        await conn.execute(
+            sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ANCHOR_CHAIN_LOCK_KEY}
+        )
+
         existing = (
             await conn.execute(
                 sa.text(

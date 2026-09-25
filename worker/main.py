@@ -156,15 +156,16 @@ def _build_pipeline(settings):
 async def _system_actor(engine) -> str | None:
     """Who the worker records as the actor for machine stages.
 
-    Resolved from the database rather than invented, so every processing job names a
-    real row. It is not an authorization subject: the worker sits outside the model.
+    A dedicated machine identity, **not the first officer in the table**. This used to
+    be `SELECT id FROM app_user ORDER BY display_name LIMIT 1`, which in the shipped
+    seed resolves to a Public Prosecutor from a different organization - so every
+    anchor and every signature written by the worker named a real, uninvolved officer
+    as the person who performed it. `infra/system_actor.py` has the full reasoning.
     """
-    async with engine.connect() as conn:
-        return (
-            await conn.execute(
-                sa.text("SELECT id::text FROM app_user ORDER BY display_name LIMIT 1")
-            )
-        ).scalar_one_or_none()
+    from infra.system_actor import ensure_system_actor
+
+    async with engine.begin() as conn:
+        return await ensure_system_actor(conn)
 
 
 def _request_shutdown(*_args) -> None:
