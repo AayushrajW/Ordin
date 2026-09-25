@@ -81,9 +81,17 @@ Tier C items that were listed as optional.
 
 ## Test suite state
 
-**442 passing, 0 skipped, 0 failing** (`python tasks.py test`), plus
-`tests/test_ordin_guard.py` (7 tests, standalone). Sentinel **19/19**, twice back to
-back. Compose path verified at **234 MiB**. Sentinel is now **21 scenarios**.
+**One measured count, from one command.** `python tasks.py test` prints what it ran;
+`python tasks.py counts` computes every figure quoted anywhere in this repository from
+the source. As of 2026-09-26 that is **567 test functions across 51 files** and
+**Sentinel 28/28**, verified twice back to back without re-seeding.
+
+This section previously gave the suite size three different ways in one file — 442, 325
+and 377 — and Sentinel as both 19/19 and 21 scenarios. None of them could be used as a
+regression baseline, which is the only thing a number here is for. Do not hand-maintain
+these: run `counts`.
+
+Compose path last verified at **234 MiB**.
 
 **Do not run two suites against one database.** A session-scoped guard in
 `tests/conftest.py` refuses the second one with an explanation — see *Surprising*
@@ -92,7 +100,44 @@ below, because this was the "unexplained flake" for weeks.
 `pytest -q` **hides the pass count** — `pyproject.toml` already sets `-q` in addopts, so
 a second one makes it `-qq`. Use `tasks.py test`.
 
-## Landed this session
+## Landed since 2026-09-21 — ADRs 0028-0031, migrations 0013-0015
+
+A cold session reading the list below would have thought none of this existed.
+
+- **Encryption at rest** (ADR 0028, `infra/crypto.py`). Envelope encryption: a master
+  key wraps a per-blob data key, AES-256-GCM, composing the `cryptography` library and
+  implementing nothing. The content address stays the digest of the **plaintext** —
+  addressing the ciphertext would break idempotency and `verify()` at once, silently.
+  A tampered blob reports MISMATCH, not UNAVAILABLE. `ORDIN_MASTER_KEY` is generated
+  per machine by `tasks.py setup`; turning encryption on does **not** re-encrypt what
+  is already stored.
+- **Break-glass** (ADR 0029, migration 0013). A designated officer without sealed
+  clearance may declare a bounded, justified exception to a seal. Two policies, and the
+  split is the design: `ordin.break_glass` decides who may declare, `ordin.case_read`
+  decides whether a declaration counts — and it appears there in a **deny** rule only,
+  so it subtracts an obstacle and is never a ground for access. A grant can never
+  declare one. The justification lives in its own table, never on the chain.
+- **Export and disposal** (ADR 0031, migration 0014). `DOCUMENT_EXPORTED` and
+  `DISPOSAL_RECORDED` had no writers, so `DISPOSED_ANCHOR_ONLY` was unreachable.
+  Exports are byte-exact and unwatermarked so the recipient's digest still matches;
+  attribution lives in `export_record` instead. Disposal deletes the bytes, the OCR
+  text, the word boxes and the extracted fields in one transaction, refuses an
+  unanchored version, and keeps bytes another version still shares.
+- **Signatures are persisted** (migration 0015). The sign stage computed an HMAC and
+  threw it away; it now stores the value and its `bound_to` tuple, and a test verifies
+  a signature reconstructed from the row alone.
+- **The worker queue asks about jobs, not about `ocr_text`.** That one predicate both
+  starved the queue (a permanently failing document held the only slot for ever) and
+  made the anchor stage unretryable (once OCR succeeded, the version left the ready set
+  whatever else had failed). Stages now get `MAX_STAGE_ATTEMPTS` attempts.
+- **`LocalAnchorStore` takes an advisory lock**, the one `infra/audit_log.py` takes and
+  documented as unique to itself. Without it two concurrent anchors forked the chain and
+  `verify_chain` reported tampering on an untouched store, permanently.
+- **Machine stages are attributed to a machine** (`infra/system_actor.py`), not to
+  whichever officer sorted first by display name — which in the seed is a prosecutor
+  from another organization.
+
+## Landed 2026-09-21
 
 - **Redesigned UI.** A design system (ink chrome, archival paper, brass for authority),
   an identity chooser, a case dashboard, case pages that explain *why* you can see them,
@@ -157,7 +202,7 @@ not start rather than appearing to work.
 
 ## Half-done, and exactly where
 
-**Nothing is half-done.** Working tree committed, 325 tests green, no partially written
+**Nothing is half-done.** Working tree committed, the suite green (see *Test suite state* for the current count, which is measured rather than quoted here), no partially written
 file and no partially implemented code path.
 
 ## Measured, 2026-09-21 (`python tasks.py evaluate`)
@@ -202,7 +247,7 @@ Docker installation rebuilt from nothing.
 
 | step | result |
 |---|---|
-| migrations from an **empty** database | all 8 clean — a path never exercised before, because the volume always pre-existed |
+| migrations from an **empty** database | clean — a path never exercised before, because the volume always pre-existed. **8 at the time; 15 now** (0013 break-glass, 0014 export accounting, 0015 version signature are the newest) |
 | `python tasks.py test` | **377 passed**, 162s then 137s |
 | `python tasks.py demo` | 5 documents, 16-region derivative, 18 drafts |
 | Officer: dashboard → case → workbench | 1 case of 3; both real OCR misreads flagged |
@@ -325,8 +370,15 @@ untouched; deleting it is the builder's call.
    (ADR 0008). Check against a source before they appear in the deck.
 4. **The 1,631-case finding** cited in BOOTSTRAP slice 7 — citation still pending. It
    appears in no document, deck or fixture until supplied.
-5. **Statutory citations.** Nothing in this build cites a section number, and no
-   extractor pattern matches one.
+5. **Statutory citations.** ~~Nothing in this build cites a section number, and no
+   extractor pattern matches one.~~ **Answered in part:**
+   `domain/extraction.STATUTORY_REFERENCE` matches BNS / BNSS / BSA section numbers and
+   `extract_statutory_references` runs in the pipeline. What is still open is the part
+   that matters: **matching a reference is not citing one.** No statutory *deadline* is
+   configured anywhere, because none of them has a source behind it, and
+   `load_completeness_policy` refuses a deadline entry with no `source:` field. Do not
+   let a UI put a period on the screen without one — a fabricated "6 days remaining"
+   was removed from the case page on 2026-09-25 for exactly that reason.
 6. Team ID for the SIH submission still unknown.
 
 ## Surprising, and worth not rediscovering
@@ -421,8 +473,13 @@ untouched; deleting it is the builder's call.
 - [x] **4b Upload hardening** — sniffing, size cap, sanitisation, worker-side thread
 - [x] **6b Corpus scale-up** — 48 documents, 10 degraded, clean-vs-degraded CER
 
-Cut, and still cut: 10 (completeness engine), 11's extraction metric, 12 (selective
-disclosure).
+Cut, and still cut: 11's extraction metric, 12 (selective disclosure).
+
+**No longer cut: 10, the completeness engine.** `domain/completeness.py`,
+`policies/completeness.v1.yaml`, `GET /cases/{id}/completeness` and
+`tests/test_completeness.py` all exist and run. It reports and does not decide — an
+unknown or unconfigured target state is refused with 400 rather than answered with
+100%, which it used to do.
 
 ## Next concrete action
 

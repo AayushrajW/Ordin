@@ -89,7 +89,7 @@ something you watch pass rather than something we assert.
 | Upload hardening | content sniffing, size cap, structural sanitisation before storage |
 | Fixtures | 48 synthetic documents, English and Hindi, 10 of them degraded scans |
 
-534 test functions across 47 files, which parametrisation expands into more cases when they run. `python tasks.py test` prints the number it actually executed, and `python tasks.py counts` computes every figure quoted here from the source rather than from memory - which is the only reason these are right, because they were wrong before.
+567 test functions across 51 files, which parametrisation expands into more cases when they run. `python tasks.py test` prints the number it actually executed, and `python tasks.py counts` computes every figure quoted here from the source rather than from memory - which is the only reason these are right, because they were wrong before.
 
 ---
 
@@ -139,7 +139,7 @@ in this repository.
 | `docs/PLAN.md` | build order, budget, and what was cut |
 | `docs/THREAT-MODEL.md` | 8 attacker classes, invariant coverage, accepted risks |
 | `docs/STATUS.md` | where the build actually is, written for a cold start |
-| `docs/adr/` | 27 decisions, each with its consequences |
+| `docs/adr/` | 31 decisions, each with its consequences |
 | `docs/DEPLOYMENT.md` | how to deploy it, and what deploying it does not cover |
 | `docs/PLAN-PRODUCT.md` | the work from demo to deployable, and what was actually true |
 | `docs/modules/` | one page per landed slice, with the questions a judge will ask |

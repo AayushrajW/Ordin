@@ -36,7 +36,8 @@ from domain.extraction import extract_fields, extract_statutory_references
 from infra.anchor import LocalAnchorStore
 from infra.blobstore import BlobStore, sha256_bytes
 from infra.esign import SimulatedESignProvider
-from infra.intake import sanitise
+from infra.intake import RejectionCode, UploadRejected, sanitise
+from infra.malware import MalwareScanner, NoOpMalwareScanner
 from infra.textsource import TextSource, TextSourceUnavailable
 
 # How many times a stage may fail before the pipeline stops offering it.
@@ -115,11 +116,16 @@ class Pipeline:
         text_source: TextSource,
         signer: SimulatedESignProvider,
         anchors: LocalAnchorStore | None = None,
+        scanner: MalwareScanner | None = None,
     ) -> None:
         self.blobs = blobs
         self.text_source = text_source
         self.signer = signer
         self.anchors = anchors or LocalAnchorStore()
+        # Defaulted rather than required: every caller would otherwise have to pass the
+        # same do-nothing object, and a parameter everyone fills in identically is one
+        # somebody eventually forgets.
+        self.scanner = scanner or NoOpMalwareScanner()
 
     # --- job bookkeeping ------------------------------------------------------
 
@@ -228,6 +234,17 @@ class Pipeline:
         # What is stored, hashed, signed and anchored is the sanitised file. Anchoring
         # the digest of the upload would anchor something the system does not hold.
         intake = sanitise(data)
+
+        # The malware seam. `NoOpMalwareScanner` returns NOT_SCANNED and never CLEAN,
+        # so nothing downstream can mistake a verdict for clearance - AR-12: "Ordin
+        # proves the bytes are the bytes that arrived, an authenticity claim, never a
+        # safety claim." Only INFECTED refuses, which this implementation cannot
+        # produce; the call exists so the seam a real scanner slots into is on the real
+        # path rather than in a docstring. Four documents described this as a declared
+        # stub before it existed (infra/malware.py has the history).
+        scan = self.scanner.scan(intake.data)
+        if not scan.may_store:
+            raise UploadRejected(RejectionCode.SANITISATION_FAILED)
 
         # **Identity is the digest of what arrived, not of what is stored** (ADR 0017,
         # migration 0008). Keying on the stored digest made the identity of an upload
@@ -530,7 +547,35 @@ class Pipeline:
             case_id=case_id, document_id=document_id, version_id=version_id,
             content_sha256=content_sha256, actor_id=actor_id, at=at,
         )
-        return f"signature:{signature.value[:16]}", signature.provider, signature.maturity
+        # **Persisted, because it used to be discarded.** The stage returned
+        # `signature:{value[:16]}` as the job's output_ref and stored nothing else, so
+        # the record said a document was signed while holding nothing that could
+        # demonstrate it - `verify` needs the full value and the whole `bound_to`
+        # structure, and neither survived. Migration 0015 has the reasoning.
+        #
+        # ON CONFLICT DO NOTHING on the unique version_id: a retried stage must not mint
+        # a second signature, the same rule the anchor and the version already follow.
+        signature_id = uuid.uuid4()
+        await conn.execute(
+            sa.text(
+                "INSERT INTO version_signature "
+                "(id, version_id, value, algorithm, provider, maturity, "
+                " case_id, document_id, content_sha256, actor_id, signed_at) "
+                "VALUES (:i, :v, :val, :alg, :prov, :mat, :c, :d, :h, :a, :ts) "
+                "ON CONFLICT (version_id) DO NOTHING"
+            ),
+            {
+                "i": signature_id, "v": version_id, "val": signature.value,
+                "alg": signature.algorithm, "prov": signature.provider,
+                "mat": signature.maturity,
+                "c": signature.bound_to["case_id"],
+                "d": signature.bound_to["document_id"],
+                "h": signature.bound_to["content_sha256"],
+                "a": signature.bound_to["actor_id"],
+                "ts": signature.bound_to["signed_at"],
+            },
+        )
+        return str(signature_id), signature.provider, signature.maturity
 
     async def _stage_anchor(self, conn, *, case_id, document_id, version_id, actor_id,
                             content_sha256, at):

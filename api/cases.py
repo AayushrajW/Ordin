@@ -505,7 +505,12 @@ async def change_case_state(
             target_state=target.value,
             counts=await _class_counts(conn, case_id),
         )
-        if not report.may_proceed:
+        # **`is False`, not falsy.** `may_proceed` is None when the target state has no
+        # configured checklist, and "nobody wrote down what this state requires" must not
+        # block a transition - it is not a shortfall, there is nothing to satisfy, and
+        # treating it as one refused the move with `missing: []`, which tells the officer
+        # to fix an empty list. Only an actual blocking shortfall stops anybody.
+        if report.may_proceed is False:
             raise HTTPException(
                 status_code=409,
                 detail={
